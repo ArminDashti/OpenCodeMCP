@@ -1,6 +1,8 @@
 import os from "node:os";
 import path from "node:path";
 
+import { DEFAULT_API_PORT, loadCliConfig } from "./cli-config.js";
+
 /** Runtime configuration, resolved from the environment on every start. */
 export interface Config {
   /** Base URL of a running `opencode serve` instance, no trailing slash. */
@@ -19,7 +21,7 @@ export interface Config {
   autostart: boolean;
 }
 
-const DEFAULT_PORT = 4096;
+const DEFAULT_PORT = DEFAULT_API_PORT;
 
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -28,11 +30,24 @@ function envInt(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+function defaultBaseUrl(): string {
+  try {
+    const cli = loadCliConfig();
+    const port =
+      Number.isInteger(cli.apiPort) && cli.apiPort >= 1 && cli.apiPort <= 65535
+        ? cli.apiPort
+        : DEFAULT_PORT;
+    return `http://127.0.0.1:${port}`;
+  } catch {
+    return `http://127.0.0.1:${DEFAULT_PORT}`;
+  }
+}
+
 export function loadConfig(): Config {
   const baseUrl = (
     process.env.OPENCODE_URL ??
     process.env.OPENCODE_SERVER_URL ??
-    `http://127.0.0.1:${DEFAULT_PORT}`
+    defaultBaseUrl()
   ).replace(/\/+$/, "");
 
   const password = process.env.OPENCODE_PASSWORD ?? process.env.OPENCODE_SERVER_PASSWORD;

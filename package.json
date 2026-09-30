@@ -5,7 +5,8 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "opencode-mcp": "dist/index.js"
+    "opencode-mcp": "dist/index.js",
+    "opencodemcp": "dist/cli.js"
   },
   "files": [
     "dist",

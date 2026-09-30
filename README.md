@@ -22,6 +22,7 @@ orchestrator (Cursor / Claude Code / …)
 | --- | --- |
 | `assign_task` | Give OpenCode a task. Creates a session (or continues one), sets agent/model/directory, optionally attaches files, and by default **blocks until the run goes idle**, returning the agent's reply, tool-call count, tokens and cost. |
 | `models_list` | The models the orchestrator may choose from — `provider/model` id, context window, output limit, tool support, variants (effort tiers), price, availability, plus the current server default. |
+| `providers_list` | Supported providers with verified base URLs, key endpoints, API-key env vars, docs links and transparent logo files. |
 | `score_to_agent` | Record how well an agent handled a task (0–100) and get back the per-agent ranking. Scores persist locally so assignment decisions can be made on evidence. |
 | `fetch_session` | List sessions, or read one in detail: status, agent, model, cost, tokens and a compact transcript including tool calls. Use it to poll a `wait:false` dispatch or review work before scoring. |
 
@@ -33,6 +34,34 @@ assign_task   →  task + model (+ agent/directory), get sessionID + reply
 fetch_session →  inspect transcript / poll a background dispatch
 score_to_agent(agent, score, sessionID)  →  ranking → next assignment
 ```
+
+## Providers
+
+Supported provider ids (use as `provider` in `assign_task` / `models_list`, or
+via the `providers_list` MCP tool and the dashboard's Providers page):
+
+| Provider id | Label | Base URL | API key env | Logo |
+| --- | --- | --- | --- | --- |
+| `openai` | OpenAI | `https://api.openai.com/v1` | `OPENAI_API_KEY` | `assets/providers/openai.svg` |
+| `anthropic` | Claude (Anthropic) | `https://api.anthropic.com` | `ANTHROPIC_API_KEY` | `assets/providers/claude.svg` |
+| `google` | Google (Gemini) | `https://generativelanguage.googleapis.com` | `GEMINI_API_KEY` (`GOOGLE_API_KEY`) | `assets/providers/google.svg` |
+| `mistral` | Mistral AI | `https://api.mistral.ai/v1` | `MISTRAL_API_KEY` | `assets/providers/mistral.svg` |
+| `openrouter` | OpenRouter | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `assets/providers/openrouter.svg` |
+| `opencode` | OpenCode Zen | `https://opencode.ai/zen/v1` | `OPENCODE_API_KEY` | `assets/providers/opencode.svg` |
+| `opencode-go` | OpenCode Go | `https://opencode.ai/zen/go/v1` | `OPENCODE_API_KEY` | `assets/providers/opencode-go.svg` |
+| `ollama` | Ollama (local) | `http://localhost:11434` | none (optional `OLLAMA_API_KEY`) | `assets/providers/ollama.svg` |
+| `openai-compatible` | OpenAI-Compatible (custom) | `{baseURL}` (e.g. `http://127.0.0.1:1234/v1`) | custom | `assets/providers/openai-compatible.svg` |
+| `xai` | xAI (Grok) | `https://api.x.ai/v1` | `XAI_API_KEY` | `assets/providers/xai.svg` |
+| `deepseek` | DeepSeek | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` | `assets/providers/deepseek.svg` |
+| `groq` | Groq | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` | `assets/providers/groq.svg` |
+| `perplexity` | Perplexity | `https://api.perplexity.ai` | `PERPLEXITY_API_KEY` | `assets/providers/perplexity.svg` |
+| `cohere` | Cohere | `https://api.cohere.com/v2` | `COHERE_API_KEY` | `assets/providers/cohere.svg` |
+
+Key per-provider endpoints (chat / models / catalog) live in `src/providers.ts`
+and are served at runtime via `GET /api/providers` (dashboard Providers page)
+and the `providers_list` MCP tool. Endpoints + logo sources were verified
+2026-09-30 against each provider's official docs (docs URLs in the same file).
+All logos except `opencode-official-favicon.svg` are transparent-background SVGs.
 
 ## Requirements
 
@@ -48,6 +77,29 @@ npm install
 npm run build          # emits dist/
 npm test               # integration harness against your running OpenCode
 ```
+
+## CLI (`opencodemcp`)
+
+On Windows the installer (`scripts/installer-win-x64.ps1`) deploys an
+`opencodemcp.cmd` shim and adds `%LOCALAPPDATA%\opencode-mcp` to the User
+`PATH`, so `opencodemcp` resolves from any terminal (restart the terminal
+after first install). Global `npm install` exposes the same command via the
+`opencodemcp` bin entry (`dist/cli.js`).
+
+```text
+opencodemcp service start|stop|restart|status
+opencodemcp doctor
+opencodemcp webui [--port <n>]        # run the local dashboard web UI
+opencodemcp webui port [--port <n>]   # show or set the web UI port
+opencodemcp api port [--port <n>]     # show or set the API port
+opencodemcp update                    # placeholder — not implemented yet
+opencodemcp remove                    # placeholder — not implemented yet
+opencodemcp help
+```
+
+Ports persist in `~/.opencode-mcp/config.json` (defaults: api `4096`,
+webui `8090`). The MCP itself still prefers `OPENCODE_URL` when set, then
+the background service from `service.json`, then the stored api port.
 
 ## Register with Cursor
 
@@ -105,8 +157,9 @@ from the background service's.
   "task": "Add pagination to src/api/users.ts and run the tests",
   "sessionID": "ses_…",              // optional: continue an existing session
   "title": "pagination",             // optional: title for a new session
-  "agent": "build",                  // optional: build | plan | explore | …
-  "model": "opencode-go/gpt-6-luna", // optional: pick from models_list
+  "orchester": "build",              // optional: build | plan | explore | … (agent is a deprecated alias)
+  "provider": "opencode-go",         // optional: pairs with model
+  "model": "gpt-6-luna",             // optional: bare id with provider, or "provider/model" for compatibility
   "variant": "high",                 // optional: effort tier of that model
   "directory": "C:/work/app",        // optional: project directory
   "files": ["C:/work/app/spec.md"],  // optional: prompt attachments
@@ -133,16 +186,18 @@ replies with `once`/`always`/`reject` through OpenCode's permission API or re-as
 ```
 
 Returns `default`, `totalMatched`, `returned` and `models[]` with
-`id` (`provider/modelID`), `providerID`, `modelID`, `context`, `maxOutput`, `tools`,
-`variants`, `status`, `enabled`, `isDefault` (plus `cost` and `capabilities` in `full`
-detail). Large result sets are trimmed to fit the MCP response budget and flagged
+`id` (`provider/modelID`), `provider`/`providerID`, `model`/`modelID`, `context`, `maxOutput`, `tools`,
+`variants`, `status`, `enabled`, `isDefault`, plus evidence from past runs:
+`scoreCount`, `averageScore`, `lastScore`, `avgTaskMs`/`avgTaskTime` (average time of doing a task).
+Large result sets are trimmed to fit the MCP response budget and flagged
 `truncated`.
 
 ### `score_to_agent`
 
 ```jsonc
-{ "agent": "build", "score": 92, "sessionID": "ses_…",
-  "model": "opencode-go/gpt-6-luna", "feedback": "clean diff, tests added",
+{ "orchester": "build", "score": 92, "sessionID": "ses_…",
+  "provider": "opencode-go", "model": "gpt-6-luna", "durationMs": 45000,
+  "feedback": "clean diff, tests added",
   "task": "pagination", "includeRanking": true }
 ```
 
