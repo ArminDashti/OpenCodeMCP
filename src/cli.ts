@@ -11,7 +11,7 @@
  *   opencodemcp update            (placeholder)
  *   opencodemcp remove            (placeholder)
  */
-import { execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -208,6 +208,23 @@ async function doctor(): Promise<void> {
   if (failed > 0) process.exitCode = 1;
 }
 
+/** Open the default browser at the given URL (cross-platform, best-effort). */
+function openBrowser(url: string): void {
+  const platform = process.platform;
+  try {
+    if (platform === "win32") {
+      // `start` is a cmd builtin; spawn it detached so it does not block.
+      spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore" }).unref();
+    } else if (platform === "darwin") {
+      spawn("open", [url], { detached: true, stdio: "ignore" }).unref();
+    } else {
+      spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
+    }
+  } catch {
+    // best-effort — never block the server on a browser launch failure
+  }
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const cmd = (argv[0] ?? "").toLowerCase();
@@ -299,6 +316,7 @@ async function main(): Promise<void> {
       const addr = server.address();
       const shown = typeof addr === "object" && addr ? `http://127.0.0.1:${addr.port}` : `http://127.0.0.1:${finalPort}`;
       console.log(`opencodemcp webui listening on ${shown} (Ctrl+C to stop)`);
+      openBrowser(shown);
     } catch (err) {
       fail(err instanceof Error ? err.message : String(err));
     }

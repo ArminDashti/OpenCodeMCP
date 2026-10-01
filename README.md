@@ -89,7 +89,7 @@ after first install). Global `npm install` exposes the same command via the
 ```text
 opencodemcp service start|stop|restart|status
 opencodemcp doctor
-opencodemcp webui [--port <n>]        # run the local dashboard web UI
+opencodemcp webui [--port <n>]        # run the local dashboard web UI (opens browser)
 opencodemcp webui port [--port <n>]   # show or set the web UI port
 opencodemcp api port [--port <n>]     # show or set the API port
 opencodemcp update                    # placeholder — not implemented yet
@@ -100,6 +100,33 @@ opencodemcp help
 Ports persist in `~/.opencode-mcp/config.json` (defaults: api `4096`,
 webui `8090`). The MCP itself still prefers `OPENCODE_URL` when set, then
 the background service from `service.json`, then the stored api port.
+
+Running `opencodemcp webui` automatically opens your default browser at the
+dashboard URL.
+
+## Data storage
+
+All persistent data lives in a single SQLite database at
+`~/.opencode-mcp/opencode-mcp.db` (override with `OPENCODE_MCP_DB`):
+
+- **scores** — `score_to_agent` records (auto-migrated from the legacy
+  `scores.json` on first run)
+- **api_keys** — per-provider API keys imported through the WebUI
+- **logs** — persisted log ring for the Logs page
+- **settings** — WebUI preferences (theme, density, refresh, …)
+
+## WebUI pages
+
+The dashboard (`opencodemcp webui`) includes:
+
+- **Dashboard** — status, recent sessions, agent ranking
+- **Tasks** — score records with token/duration enrichment
+- **Providers** — provider catalog with color logos; import/delete API keys
+- **Skill** — copy or download the `SKILL.md` skill definition for your harness
+- **Stats** — aggregate stats: top models, top agents, score distribution
+- **Logs** — persisted log viewer with level filter and search
+- **Playground** — live MCP tool testing
+- **Settings** — tabbed settings (Appearance / Behaviour / App)
 
 ## Register with Cursor
 

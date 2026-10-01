@@ -9,9 +9,11 @@ import { OpenCode } from "./opencode.js";
 import { loadStore, aggregate, aggregateModels, recordScore, splitModelRef } from "./scores.js";
 import { PROVIDERS } from "./providers.js";
 import { compactSession, renderTranscript, waitForIdle, countToolCalls, collectReply } from "./render.js";
+import { openDb, insertLog, listLogs, clearLogs, getSetting, setSetting, upsertApiKey, listApiKeys, deleteApiKey, getApiKey } from "./db.js";
+import { SKILL_MARKDOWN, SKILL_NAME, SKILL_VERSION, skillFile } from "./skill.js";
 
 // ---------------------------------------------------------------------------
-// In-memory log ring (info / warn / error) for the Logs page.
+// Log ring (persisted to SQLite)
 // ---------------------------------------------------------------------------
 
 export type LogLevel = "info" | "warn" | "error";
@@ -22,13 +24,9 @@ export interface LogEntry {
   message: string;
 }
 
-const LOG_CAP = 500;
-const logs: LogEntry[] = [];
-
 export function pushLog(level: LogLevel, message: string, source = "webui"): LogEntry {
   const entry: LogEntry = { ts: Date.now(), level, source, message: String(message).slice(0, 2000) };
-  logs.push(entry);
-  if (logs.length > LOG_CAP) logs.splice(0, logs.length - LOG_CAP);
+  insertLog(level, source, entry.message);
   return entry;
 }
 
@@ -37,7 +35,7 @@ function esc(s: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// WebUI settings store (~/.opencode-mcp/webui-settings.json)
+// WebUI settings (SQLite-backed)
 // ---------------------------------------------------------------------------
 
 export type ThemeName =
@@ -53,7 +51,6 @@ export type ThemeName =
   | "github-dark"
   | "monokai"
   | "tokyo-night";
-
 export const THEMES: { id: ThemeName; label: string }[] = [
   { id: "system", label: "system (auto)" },
   { id: "light", label: "Light" },
@@ -87,47 +84,46 @@ const DEFAULT_SETTINGS: WebuiSettings = {
   logsLevel: "all",
 };
 
-function settingsFile(): string {
-  return process.env.OPENCODE_MCP_WEBUI_SETTINGS ?? path.join(os.homedir(), ".opencode-mcp", "webui-settings.json");
+function loadSettings(): WebuiSettings {
+  const s = allSettingsFromDb();
+  return {
+    theme: THEME_IDS.has(s.theme) ? (s.theme as ThemeName) : DEFAULT_SETTINGS.theme,
+    density: ["comfortable", "compact"].includes(s.density) ? (s.density as "comfortable" | "compact") : DEFAULT_SETTINGS.density,
+    refreshMs: Number.isInteger(Number(s.refreshMs)) && Number(s.refreshMs) >= 0 && Number(s.refreshMs) <= 300000
+      ? Number(s.refreshMs)
+      : DEFAULT_SETTINGS.refreshMs,
+    sessionsLimit: Number.isInteger(Number(s.sessionsLimit)) && Number(s.sessionsLimit) >= 1 && Number(s.sessionsLimit) <= 200
+      ? Number(s.sessionsLimit)
+      : DEFAULT_SETTINGS.sessionsLimit,
+    logsLevel: ["all", "info", "warn", "error"].includes(s.logsLevel) ? (s.logsLevel as "all" | LogLevel) : DEFAULT_SETTINGS.logsLevel,
+  };
 }
 
-function loadSettings(): WebuiSettings {
-  try {
-    const raw = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
-    return {
-      theme: THEME_IDS.has(raw?.theme) ? raw.theme : DEFAULT_SETTINGS.theme,
-      density: ["comfortable", "compact"].includes(raw?.density) ? raw.density : DEFAULT_SETTINGS.density,
-      refreshMs:
-        Number.isInteger(raw?.refreshMs) && raw.refreshMs >= 0 && raw.refreshMs <= 300000
-          ? raw.refreshMs
-          : DEFAULT_SETTINGS.refreshMs,
-      sessionsLimit:
-        Number.isInteger(raw?.sessionsLimit) && raw.sessionsLimit >= 1 && raw.sessionsLimit <= 200
-          ? raw.sessionsLimit
-          : DEFAULT_SETTINGS.sessionsLimit,
-      logsLevel: ["all", "info", "warn", "error"].includes(raw?.logsLevel) ? raw.logsLevel : DEFAULT_SETTINGS.logsLevel,
-    };
-  } catch {
-    return { ...DEFAULT_SETTINGS };
-  }
+function allSettingsFromDb(): Record<string, string> {
+  const db = openDb();
+  const rows = db.prepare("SELECT key, value FROM settings").all() as unknown as { key: string; value: string }[];
+  const out: Record<string, string> = {};
+  for (const r of rows) out[r.key] = r.value;
+  return out;
 }
 
 function saveSettings(patch: Partial<WebuiSettings>): WebuiSettings {
   const next = { ...loadSettings(), ...patch };
-  // validate
   if (!THEME_IDS.has(next.theme)) next.theme = DEFAULT_SETTINGS.theme;
   if (!["comfortable", "compact"].includes(next.density)) next.density = DEFAULT_SETTINGS.density;
   if (!Number.isInteger(next.refreshMs) || next.refreshMs < 0 || next.refreshMs > 300000) next.refreshMs = DEFAULT_SETTINGS.refreshMs;
   if (!Number.isInteger(next.sessionsLimit) || next.sessionsLimit < 1 || next.sessionsLimit > 200) next.sessionsLimit = DEFAULT_SETTINGS.sessionsLimit;
   if (!["all", "info", "warn", "error"].includes(next.logsLevel)) next.logsLevel = "all";
-  const file = settingsFile();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(next, null, 2) + "\n", "utf8");
+  setSetting("theme", next.theme);
+  setSetting("density", next.density);
+  setSetting("refreshMs", String(next.refreshMs));
+  setSetting("sessionsLimit", String(next.sessionsLimit));
+  setSetting("logsLevel", next.logsLevel);
   return next;
 }
 
 // ---------------------------------------------------------------------------
-// Page (single-file SPA: Dashboard / Tasks / Logs / Playground / Settings)
+// Page (single-file SPA: Dashboard / Tasks / Providers / Skill / Stats / Logs / Playground / Settings)
 // ---------------------------------------------------------------------------
 
 const PAGE = `<!doctype html>
@@ -155,6 +151,8 @@ aside{background:var(--panel);border-right:1px solid var(--line);padding:18px 14
 .nav button{display:flex;width:100%;text-align:left;gap:10px;align-items:center;padding:10px 12px;border:1px solid transparent;background:transparent;color:var(--ink);border-radius:10px;cursor:pointer;font-size:14px}
 .nav button.active{background:var(--chip);border-color:var(--line);font-weight:700}
 .nav button:hover{background:var(--chip)}
+.back-btn{display:flex;width:100%;text-align:left;gap:10px;align-items:center;padding:10px 12px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;cursor:pointer;font-size:14px;margin-bottom:8px}
+.back-btn:hover{background:var(--chip)}
 .side-foot{margin-top:auto;color:var(--muted);font-size:12px;padding:8px 6px}
 main{padding:22px 26px;max-width:none;width:100%;min-width:0}
 .topbar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
@@ -201,14 +199,23 @@ pre{padding:12px;overflow:auto;font-size:12px;max-height:420px}
 .modal .box{background:var(--panel);border:1px solid var(--line);border-radius:14px;max-width:760px;width:100%;padding:18px;max-height:86vh;overflow:auto}
 .kv{display:grid;grid-template-columns:170px 1fr;gap:6px 10px;font-size:13px;margin:8px 0}
 .kv dt{color:var(--muted)}.kv dd{margin:0}
+.prov-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px;display:flex;flex-direction:column;gap:8px}
+.prov-card .logo-row{display:flex;align-items:center;gap:10px}
+.prov-card .logo-row img{width:28px;height:28px}
+.prov-card h4{margin:0;font-size:15px}
+.prov-card .actions{display:flex;gap:6px;margin-top:4px}
+.key-input{width:100%;font-family:monospace;font-size:12px}
 </style></head><body data-density="comfortable">
 <div class="app">
 <aside>
 <div class="brand">opencodemcp<small>orchestrator dashboard</small></div>
+<button class="back-btn" id="backBtn" style="display:none">← Back</button>
 <nav class="nav" id="nav">
 <button data-page="dashboard" class="active">📊 Dashboard</button>
 <button data-page="tasks">🗂 Tasks</button>
 <button data-page="providers">🔌 Providers</button>
+<button data-page="skill">📜 Skill</button>
+<button data-page="stats">📈 Stats</button>
 <button data-page="logs">🧾 Logs</button>
 <button data-page="playground">🧪 Playground</button>
 <button data-page="settings">⚙ Settings</button>
@@ -259,9 +266,33 @@ pre{padding:12px;overflow:auto;font-size:12px;max-height:420px}
 <span class="hint" id="provCount"></span>
 <button class="btn" id="provReload">↻ Reload</button>
 </div>
-<div class="cards" id="provGrid" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr))"></div>
-<p class="hint">Transparent logos: <code>assets/providers/*.svg</code> (offline). Endpoints verified 2026-09-30 against each provider's official docs — see <code>/api/providers</code>.</p>
+<div class="cards" id="provGrid" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr))"></div>
+<p class="hint">Color logos: <code>assets/providers/*.svg</code>. Endpoints verified 2026-09-30 against each provider's official docs — see <code>/api/providers</code>.</p>
 </div>
+</section>
+
+<!-- SKILL -->
+<section class="page" id="page-skill">
+<div class="card">
+<h3>Skill</h3>
+<p class="hint">Copy or download the skill definition for your harness. This markdown file tells your orchestrator how to use the opencodemcp MCP tools.</p>
+<div class="toolbar">
+<button class="btn primary" id="skillCopy">📋 Copy to clipboard</button>
+<button class="btn" id="skillDownload">⬇ Download SKILL.md</button>
+<span class="hint" id="skillMsg"></span>
+</div>
+<pre id="skillContent" style="white-space:pre-wrap;max-height:60vh"></pre>
+</div>
+</section>
+
+<!-- STATS -->
+<section class="page" id="page-stats">
+<div class="cards" id="statsCards"></div>
+<div class="grid2">
+<div class="card"><h4>Top models by score</h4><div id="statsModels">loading…</div></div>
+<div class="card"><h4>Top agents by score</h4><div id="statsAgents">loading…</div></div>
+</div>
+<div class="card"><h4>Score distribution</h4><div id="statsDist">loading…</div></div>
 </section>
 
 <!-- LOGS -->
@@ -302,6 +333,12 @@ pre{padding:12px;overflow:auto;font-size:12px;max-height:420px}
 
 <!-- SETTINGS -->
 <section class="page" id="page-settings">
+<div class="tabs" id="setTabs">
+<button data-tab="appearance" class="active">Appearance</button>
+<button data-tab="behaviour">Behaviour</button>
+<button data-tab="app">App</button>
+</div>
+<div id="setTabAppearance">
 <div class="card"><h3>Appearance</h3>
 <div class="form">
 <label>Theme</label>
@@ -311,20 +348,25 @@ pre{padding:12px;overflow:auto;font-size:12px;max-height:420px}
 <label>Log level (default filter)</label>
 <select id="setLogsLevel"><option value="all">all</option><option value="info">info</option><option value="warn">warning</option><option value="error">errors</option></select>
 </div></div>
+</div>
+<div id="setTabBehaviour">
 <div class="card"><h3>Behaviour</h3>
 <div class="form">
 <label>Auto-refresh (ms, 0=off)</label><input id="setRefresh" type="number" min="0" max="300000" step="1000"/>
 <label>Default sessions limit</label><input id="setLimit" type="number" min="1" max="200"/>
 </div></div>
+</div>
+<div id="setTabApp">
 <div class="card"><h3>App</h3>
 <div class="form">
 <label>API port</label><input id="setApiPort" type="number" min="1" max="65535"/>
 <label>WebUI port</label><input id="setWebuiPort" type="number" min="1" max="65535"/>
 <label>Base URL</label><input id="setBaseUrl" disabled/>
 <label>Directory</label><input id="setDir" disabled/>
-<label>Scores file</label><input id="setScores" disabled/>
+<label>Database</label><input id="setDb" disabled/>
 </div>
 <div class="toolbar"><button class="btn primary" id="setSave">💾 Save settings</button><span class="hint" id="setMsg"></span></div>
+</div>
 </div>
 </section>
 
@@ -332,7 +374,7 @@ pre{padding:12px;overflow:auto;font-size:12px;max-height:420px}
 <div class="modal" id="modal"><div class="box"><div class="toolbar"><b id="mTitle">detail</b><span class="spacer"></span><button class="btn" id="mClose">✕</button></div><div id="mBody"></div></div></div>
 <script>
 const $=id=>document.getElementById(id);
-const state={page:'dashboard',settings:null,tasks:[],logLevel:'all',pgTool:'assign_task',timer:null};
+const state={page:'dashboard',settings:null,tasks:[],logLevel:'all',pgTool:'assign_task',setTab:'appearance',timer:null,provKeys:{}};
 async function j(u,o){const r=await fetch(u,o);const t=await r.text();try{return JSON.parse(t)}catch{return {raw:t,http:r.status}}}
 function pad(n){return String(n).padStart(2,'0')}
 function fmtDT(ts){if(ts==null||ts==='')return '—';const d=new Date(Number(ts));if(isNaN(d.getTime()))return '—';return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+'-'+pad(d.getMinutes())+'-'+pad(d.getSeconds())}
@@ -343,7 +385,8 @@ function scoreBadge(s){if(s==null)return '—';const c=s>=90?'hi':s>=70?'hi':s>=
 function applyTheme(){const th=state.settings?.theme||'system';const known=['light','dark','dark-plus','dracula','nord','solarized-light','solarized-dark','github-light','github-dark','monokai','tokyo-night'];let eff=th;if(th==='system'){eff=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}if(!known.includes(eff))eff='light';document.documentElement.dataset.theme=eff;document.body.dataset.density=state.settings?.density||'comfortable';$('themeBtn').textContent='◐ '+eff}
 function clientLog(level,msg){fetch('/api/logs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({level,message:String(msg).slice(0,500)})}).catch(()=>{})}
 // nav
-$('nav').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;state.page=b.dataset.page;document.querySelectorAll('#nav button').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id==='page-'+state.page));$('title').textContent=b.textContent.trim().replace(/^[\\p{Emoji}\\s]+/u,'');load()});
+$('nav').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;state.page=b.dataset.page;document.querySelectorAll('#nav button').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id==='page-'+state.page));$('title').textContent=b.textContent.trim().replace(/^[\p{Emoji}\s]+/u,'');$('backBtn').style.display='none';load()});
+$('backBtn').addEventListener('click',()=>{state.page='dashboard';document.querySelectorAll('#nav button').forEach(x=>x.classList.toggle('active',x.dataset.page==='dashboard'));document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id==='page-dashboard'));$('title').textContent='Dashboard';$('backBtn').style.display='none';load()});
 // dashboard
 async function loadDashboard(){const lim=state.settings?.sessionsLimit||20;
 try{
@@ -378,8 +421,43 @@ async function loadProviders(){const q=($('provSearch').value||'').trim().toLowe
 try{const d=await j('/api/providers');let rows=d.providers||[];
 if(q)rows=rows.filter(p=>((p.id||'')+' '+(p.label||'')+' '+(p.baseUrl||'')).toLowerCase().includes(q));
 $('provCount').textContent=rows.length+' of '+(d.count??rows.length)+' providers';
-$('provGrid').innerHTML=rows.map(p=>'<div class="card"><h4><img src="/assets/providers/'+p.id+'.svg" alt="" width="18" height="18" style="vertical-align:-3px"/> '+p.label+'</h4><div class="v" style="font-size:15px"><code>'+p.id+'</code></div><p class="hint">'+p.baseUrl+'</p><p style="font-size:12.5px">'+p.note+'</p><p class="hint">key: <code>'+(p.envKey||'none (local/custom)')+'</code> • <a href="'+p.docs+'" target="_blank" rel="noreferrer">docs</a></p></div>').join('')||'<p class="hint">no providers match</p>';
+$('provGrid').innerHTML=rows.map(p=>{
+const key=state.provKeys[p.id];
+const keyStatus=key?'<span class="badge hi">key saved</span>':'<span class="hint">no key</span>';
+return '<div class="prov-card"><div class="logo-row"><img src="/assets/providers/'+p.id+'.svg" alt="" width="28" height="28"/><h4>'+p.label+'</h4></div><div class="v" style="font-size:13px"><code>'+p.id+'</code></div><p class="hint">'+p.baseUrl+'</p><p style="font-size:12px">'+p.note+'</p><p class="hint">key: <code>'+(p.envKey||'none')+'</code> '+keyStatus+'</p><div class="actions"><button class="btn" data-prov="'+p.id+'" data-action="import">Import key</button>'+(key?'<button class="btn" data-prov="'+p.id+'" data-action="delete">Delete</button>':'')+'</div></div>';
+}).join('')||'<p class="hint">no providers match</p>';
+// bind import/delete buttons
+document.querySelectorAll('#provGrid [data-action]').forEach(btn=>{btn.addEventListener('click',()=>{const prov=btn.dataset.prov;const action=btn.dataset.action;if(action==='import')openKeyModal(prov);if(action==='delete')deleteKey(prov);});});
 }catch(e){$('provGrid').innerHTML='error: '+e;clientLog('error','providers load: '+e)}
+}
+function openKeyModal(proId){const p=PROVIDERS.find(x=>x.id===proId);if(!p)return;
+$('mTitle').textContent='Import API key — '+p.label;
+$('mBody').innerHTML='<p class="hint">Enter the API key for <b>'+esc(p.label)+'</b>. It is stored locally in the SQLite database and used as <code>'+esc(p.envKey||'custom')+'</code>.</p><input type="password" id="keyInput" class="key-input" placeholder="sk-..." style="width:100%;margin:10px 0"/><div class="toolbar"><button class="btn primary" id="keySave">Save key</button><button class="btn" id="keyCancel">Cancel</button><span class="hint" id="keyMsg"></span></div>';
+$('modal').classList.add('open');
+$('keyCancel').onclick=()=>$('modal').classList.remove('open');
+$('keySave').onclick=async()=>{const val=$('keyInput').value.trim();if(!val){$('keyMsg').textContent='key is required';return}try{const r=await fetch('/api/apikeys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:provId,label:p.label,envKey:p.envKey||'custom',key:val})});const d=await r.json();if(d.error){$('keyMsg').textContent='error: '+d.error}else{$('modal').classList.remove('open');loadProviders();clientLog('info','API key saved for '+provId)}}catch(e){$('keyMsg').textContent='error: '+e}};
+}
+async function deleteKey(provId){if(!confirm('Delete saved key for '+provId+'?'))return;try{await fetch('/api/apikeys/'+encodeURIComponent(provId),{method:'DELETE'});loadProviders();clientLog('info','API key deleted for '+provId)}catch(e){clientLog('error','delete key: '+e)}}
+// skill
+function loadSkill(){$('skillContent').textContent=SKILL_MARKDOWN}
+$('skillCopy').onclick=async()=>{try{await navigator.clipboard.writeText(SKILL_MARKDOWN);$('skillMsg').textContent='copied ✓'}catch(e){$('skillMsg').textContent='copy failed: '+e}};
+$('skillDownload').onclick=()=>{const blob=new Blob([SKILL_MARKDOWN],{type:'text/markdown'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='SKILL.md';a.click();URL.revokeObjectURL(url);$('skillMsg').textContent='downloaded ✓'};
+// stats
+async function loadStats(){try{const [sc,tk]=await Promise.all([j('/api/scores'),j('/api/tasks?limit=500')]);
+const rank=sc.ranking||[];const tasks=tk.tasks||[];const models=tk.models||[];
+const totalTasks=tasks.length;const totalTokens=tasks.reduce((a,t)=>a+((t.tokens?.input||0)+(t.tokens?.output||0)+(t.tokens?.reasoning||0)),0);
+const totalCost=tasks.reduce((a,t)=>a+(t.cost||0),0);
+const avgScore=rank.length?(rank.reduce((a,r)=>a+r.average,0)/rank.length).toFixed(1):'—';
+const best=rank[0];
+$('statsCards').innerHTML=['Total tasks|'+totalTasks,'Total scores|'+(sc.count??rank.reduce((a,r)=>a+r.count,0)),'Avg score|'+avgScore,'Best agent|'+(best?best.agent:'—'),'Total tokens|'+Number(totalTokens).toLocaleString(),'Total cost|$'+totalCost.toFixed(4)].map(x=>{const[a,b]=x.split('|');return '<div class="card"><h4>'+a+'</h4><div class="v">'+b+'</div></div>'}).join('');
+$('statsModels').innerHTML=models.length?'<table><tr><th>model</th><th>n</th><th>avg</th><th>avg time</th></tr>'+models.slice(0,10).map(m=>'<tr><td><code>'+m.model+'</code></td><td>'+m.count+'</td><td>'+m.averageScore+'</td><td class="hint">'+fmtDur(m.avgDurationMs)+'</td></tr>').join('')+'</table>':'<span class="hint">no model data</span>';
+$('statsAgents').innerHTML=rank.length?'<table><tr><th>agent</th><th>n</th><th>avg</th><th>min</th><th>max</th></tr>'+rank.slice(0,10).map(r=>'<tr><td>'+r.agent+'</td><td>'+r.count+'</td><td>'+r.average+'</td><td>'+r.min+'</td><td>'+r.max+'</td></tr>').join('')+'</table>':'<span class="hint">no agent data</span>';
+// distribution
+const bands=[{label:'90-100',min:90,max:101},{label:'70-89',min:70,max:90},{label:'40-69',min:40,max:70},{label:'0-39',min:0,max:40}];
+const dist=bands.map(b=>{const count=tasks.filter(t=>t.score>=b.min&&t.score<b.max).length;return{label:b.label,count}});
+const maxCount=Math.max(...dist.map(d=>d.count),1);
+$('statsDist').innerHTML='<div style="display:flex;flex-direction:column;gap:6px">'+dist.map(d=>'<div style="display:flex;align-items:center;gap:8px"><span class="hint" style="width:60px">'+d.label+'</span><div style="flex:1;background:var(--chip);border-radius:4px;height:20px;overflow:hidden"><div style="width:'+Math.round(d.count/maxCount*100)+'%;height:100%;background:var(--accent);border-radius:4px"></div></div><span style="font-size:12px;font-weight:700">'+d.count+'</span></div>').join('')+'</div>';
+}catch(e){$('statsCards').innerHTML='<div class="card"><h4>Error</h4><div class="v">'+e+'</div></div>';clientLog('error','stats load: '+e)}
 }
 // logs
 async function loadLogs(){const lv=state.logLevel;const q=$('logSearch').value.trim();
@@ -396,13 +474,15 @@ async function pgRun(){const fs=PG_FIELDS[state.pgTool];const body={};for(const[
 $('pgHint').textContent='running…';$('pgOut').textContent='running '+state.pgTool+'…';
 try{const d=await j('/api/playground/'+state.pgTool,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});$('pgOut').textContent=JSON.stringify(d,null,2).slice(0,20000);$('pgHint').textContent='done';clientLog(d&&d.error?'error':'info','playground '+state.pgTool+': '+(d.error||'ok'));if(state.pgTool==='score_to_agent'&&!d.error)loadTasks()}catch(e){$('pgOut').textContent='error: '+e;$('pgHint').textContent='failed';clientLog('error','playground '+state.pgTool+': '+e)}}
 $('pgRun').onclick=pgRun;
+// settings tabs
+$('setTabs').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;state.setTab=b.dataset.tab;document.querySelectorAll('#setTabs button').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('#setTabAppearance,#setTabBehaviour,#setTabApp').forEach(el=>el.style.display='none');$('setTab'+state.setTab.charAt(0).toUpperCase()+state.setTab.slice(1)).style.display='block'});
 // settings
-async function loadSettingsUI(){try{const [s,st]=await Promise.all([j('/api/settings'),j('/api/status')]);state.settings=s.settings||s;$('setTheme').value=state.settings.theme;$('setDensity').value=state.settings.density;$('setLogsLevel').value=state.settings.logsLevel||'all';$('setRefresh').value=state.settings.refreshMs;$('setLimit').value=state.settings.sessionsLimit;$('setApiPort').value=(s.ports||st.ports||{}).api??st.ports?.api??'';$('setWebuiPort').value=(s.ports||st.ports||{}).webui??st.ports?.webui??'';$('setBaseUrl').value=st.baseUrl||'';$('setDir').value=st.directory||'';$('setScores').value=st.scoresFile||'';state.logLevel=state.settings.logsLevel||'all';applyTheme();armTimer()}catch(e){$('setMsg').textContent='load failed: '+e}}
+async function loadSettingsUI(){try{const [s,st]=await Promise.all([j('/api/settings'),j('/api/status')]);state.settings=s.settings||s;$('setTheme').value=state.settings.theme;$('setDensity').value=state.settings.density;$('setLogsLevel').value=state.settings.logsLevel||'all';$('setRefresh').value=state.settings.refreshMs;$('setLimit').value=state.settings.sessionsLimit;$('setApiPort').value=(s.ports||st.ports||{}).api??st.ports?.api??'';$('setWebuiPort').value=(s.ports||st.ports||{}).webui??st.ports?.webui??'';$('setBaseUrl').value=st.baseUrl||'';$('setDir').value=st.directory||'';$('setDb').value=st.dbPath||'';state.logLevel=state.settings.logsLevel||'all';applyTheme();armTimer()}catch(e){$('setMsg').textContent='load failed: '+e}}
 $('setSave').onclick=async()=>{const body={theme:$('setTheme').value,density:$('setDensity').value,logsLevel:$('setLogsLevel').value,refreshMs:Number($('setRefresh').value),sessionsLimit:Number($('setLimit').value),apiPort:Number($('setApiPort').value)||undefined,webuiPort:Number($('setWebuiPort').value)||undefined};$('setMsg').textContent='saving…';try{const d=await j('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(d.error){$('setMsg').textContent='error: '+d.error}else{state.settings=d.settings;$('setMsg').textContent='saved ✓';applyTheme();armTimer();clientLog('info','settings saved')}}catch(e){$('setMsg').textContent='error: '+e}};
 $('themeBtn').onclick=()=>{const order=['light','dark','dark-plus','dracula','nord','solarized-light','solarized-dark','github-light','github-dark','monokai','tokyo-night'];const cur=document.documentElement.dataset.theme||'light';const next=order[(order.indexOf(cur)+1)%order.length];state.settings.theme=next;applyTheme();fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({theme:next})}).catch(()=>{});try{localStorage.setItem('ocmcp-theme',next)}catch{}};
 function armTimer(){if(state.timer)clearInterval(state.timer);const ms=state.settings?.refreshMs||0;if(ms>0)state.timer=setInterval(()=>{if(state.page==='dashboard')loadDashboard();if(state.page==='logs'&&$('logAuto').checked)loadLogs()},ms)}
 async function boot(){try{const s=await j('/api/settings');state.settings=s.settings||s;try{const lt=localStorage.getItem('ocmcp-theme');if(lt&&!s.settings)state.settings.theme=lt}catch{}}catch{state.settings={theme:'system',density:'comfortable',refreshMs:15000,sessionsLimit:20,logsLevel:'all'}}applyTheme();renderPgForm();load();loadSettingsUI();armTimer()}
-async function load(){if(state.page==='dashboard')loadDashboard();if(state.page==='tasks')loadTasks();if(state.page==='providers')loadProviders();if(state.page==='logs')loadLogs();if(state.page==='settings')loadSettingsUI()}
+async function load(){if(state.page==='dashboard')loadDashboard();if(state.page==='tasks')loadTasks();if(state.page==='providers')loadProviders();if(state.page==='skill')loadSkill();if(state.page==='stats')loadStats();if(state.page==='logs')loadLogs();if(state.page==='settings')loadSettingsUI()}
 $('refreshBtn').onclick=load;$('taskReload').onclick=loadTasks;$('provReload').onclick=loadProviders;$('logReload').onclick=loadLogs;
 $('taskSearch').addEventListener('input',loadTasks);$('provSearch').addEventListener('input',loadProviders);$('logSearch').addEventListener('input',loadLogs);$('taskLimit').addEventListener('change',loadTasks);
 $('logClear').onclick=async()=>{await j('/api/logs/clear',{method:'POST'});loadLogs()};
@@ -433,9 +513,11 @@ main{padding:22px 26px;max-width:none;width:100%;min-width:0}
 pre{background:var(--chip);padding:12px;border-radius:8px;overflow:auto;font-size:12.5px;white-space:pre-wrap}
 code{background:var(--chip);padding:2px 6px;border-radius:6px}
 .topbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.back-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;font-size:13px;text-decoration:none}
+.back-btn:hover{background:var(--chip)}
 </style></head><body>
 <main>
-<div class="topbar"><h2 id="title">Task</h2><span class="hint" id="sub">loading…</span></div>
+<div class="topbar"><a class="back-btn" href="/">← Back</a><h2 id="title">Task</h2><span class="hint" id="sub">loading…</span></div>
 <div class="card"><h3>Request from orchester</h3><div id="req">loading…</div></div>
 <div class="card"><h3>Response from MCP</h3><div id="res">loading…</div></div>
 </main>
@@ -518,6 +600,7 @@ async function statusPayload(): Promise<Record<string, unknown>> {
     ports: { api: cli.apiPort, webui: cli.webuiPort },
     directory: cfg.directory,
     scoresFile: cfg.scoresFile,
+    dbPath: process.env.OPENCODE_MCP_DB ?? path.join(os.homedir(), ".opencode-mcp", "opencode-mcp.db"),
     info,
     ...(infoError ? { error: infoError } : {}),
   };
@@ -727,7 +810,7 @@ export function startWebui(port: number): Promise<http.Server> {
         return;
       }
 
-      // ---- providers (catalog: transparent logos + verified endpoints) ----
+      // ---- providers (catalog: color logos + verified endpoints) ----
       if (p === "/api/providers") {
         json(res, 200, { count: PROVIDERS.length, providers: PROVIDERS });
         return;
@@ -771,15 +854,62 @@ export function startWebui(port: number): Promise<http.Server> {
         return;
       }
 
+      // ---- api keys ----
+      if (p === "/api/apikeys" && req.method === "GET") {
+        const keys = listApiKeys().map((k) => ({ provider: k.provider, label: k.label, envKey: k.envKey, updatedAt: k.updatedAt }));
+        json(res, 200, { count: keys.length, keys });
+        return;
+      }
+      if (p === "/api/apikeys" && req.method === "POST") {
+        const body = await readBody(req);
+        const provider = String(body.provider ?? "").trim();
+        const key = String(body.key ?? "").trim();
+        if (!provider || !key) {
+          json(res, 400, { error: "provider and key are required" });
+          return;
+        }
+        const prov = PROVIDERS.find((pr) => pr.id === provider);
+        const label = prov?.label ?? provider;
+        const envKey = prov?.envKey ?? "custom";
+        upsertApiKey(provider, label, envKey);
+        pushLog("info", `API key saved for ${provider}`, "api");
+        json(res, 200, { ok: true, provider });
+        return;
+      }
+      if (p.startsWith("/api/apikeys/") && req.method === "DELETE") {
+        const provider = p.slice("/api/apikeys/".length);
+        deleteApiKey(provider);
+        pushLog("info", `API key deleted for ${provider}`, "api");
+        json(res, 200, { ok: true });
+        return;
+      }
+
+      // ---- skill ----
+      if (p === "/api/skill" && req.method === "GET") {
+        const file = skillFile();
+        json(res, 200, { name: file.name, mime: file.mime, content: file.content });
+        return;
+      }
+      if (p === "/api/skill/download" && req.method === "GET") {
+        const file = skillFile();
+        res.writeHead(200, {
+          "Content-Type": file.mime,
+          "Content-Disposition": `attachment; filename="${file.name}"`,
+        });
+        res.end(file.content);
+        return;
+      }
+
       // ---- logs ----
       if (p === "/api/logs" && req.method === "GET") {
         const level = url.searchParams.get("level") ?? "all";
         const q = (url.searchParams.get("q") ?? "").toLowerCase();
         const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit") ?? "200") || 200));
-        let rows = logs;
+        let rows = listLogs(limit * 2); // fetch extra to allow filtering
         if (level !== "all") rows = rows.filter((l) => l.level === level);
         if (q) rows = rows.filter((l) => (l.message + " " + l.source).toLowerCase().includes(q));
-        json(res, 200, { count: rows.length, logs: rows.slice(-limit) });
+        rows = rows.slice(0, limit);
+        json(res, 200, { count: rows.length, logs: rows });
         return;
       }
       if (p === "/api/logs" && req.method === "POST") {
@@ -790,7 +920,7 @@ export function startWebui(port: number): Promise<http.Server> {
         return;
       }
       if (p === "/api/logs/clear" && req.method === "POST") {
-        logs.length = 0;
+        clearLogs();
         pushLog("info", "log buffer cleared", "api");
         json(res, 200, { ok: true });
         return;
@@ -799,7 +929,7 @@ export function startWebui(port: number): Promise<http.Server> {
       // ---- settings ----
       if (p === "/api/settings" && req.method === "GET") {
         const cli = loadCliConfig();
-        json(res, 200, { settings: loadSettings(), ports: { api: cli.apiPort, webui: cli.webuiPort }, file: settingsFile() });
+        json(res, 200, { settings: loadSettings(), ports: { api: cli.apiPort, webui: cli.webuiPort }, file: process.env.OPENCODE_MCP_DB ?? path.join(os.homedir(), ".opencode-mcp", "opencode-mcp.db") });
         return;
       }
       if (p === "/api/settings" && (req.method === "PUT" || req.method === "POST")) {
