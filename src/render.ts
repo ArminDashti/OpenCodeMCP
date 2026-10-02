@@ -141,6 +141,32 @@ export function compactSession(s: any): Record<string, unknown> {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** An assistant message counts as finished once the server stamped `time.completed`. */
+function replyCompletedAt(m: any, since: number): boolean {
+  return (
+    m?.type === "assistant" &&
+    (m?.time?.created ?? 0) >= since &&
+    m?.time?.completed != null
+  );
+}
+
+/**
+ * Derive a session outcome when the server no longer stamps `session.outcome`.
+ * Returns null while the run is still going so pollers keep waiting.
+ */
+export function deriveOutcome(
+  session: any,
+  messages: any[],
+  running = false,
+): string | null {
+  if (typeof session?.outcome === "string" && session.outcome) return session.outcome;
+  if (running) return null;
+  const assistants = messages.filter((m) => m?.type === "assistant");
+  const last = assistants[assistants.length - 1];
+  if (!last?.time?.completed) return null;
+  return last.finish && last.finish !== "stop" ? "failed" : "succeeded";
+}
+
 export interface WaitOutcome {
   status: "completed" | "timeout" | "blocked" | "failed";
   session: any;
@@ -169,6 +195,7 @@ export async function waitForIdle(
   const pollMs = opts.pollMs ?? 700;
   let approved = 0;
   let lastSession: any = null;
+  let inactivePolls = 0;
 
   while (Date.now() < deadline) {
     await sleep(pollMs);
@@ -181,9 +208,44 @@ export async function waitForIdle(
       continue; // transient hiccup; the deadline bounds the loop
     }
 
-    if (session?.time?.idle && session.time.idle >= promptAt) {
+    // Completion signal: the session left the active map *and* a reply landed
+    // at/after the prompt (avoids racing the window before the run starts).
+    // Builds that still stamp `time.idle` keep working unchanged.
+    const legacyIdle = Boolean(session?.time?.idle && session.time.idle >= promptAt);
+    let active = true;
+    try {
+      const map = await oc.activeSessions();
+      active = Object.prototype.hasOwnProperty.call(map ?? {}, sessionId);
+    } catch {
+      active = true; // unknown → keep polling
+    }
+
+    let completedReply = false;
+    if (!active) {
+      try {
+        const msgs = (await oc.messages(sessionId, { order: "desc", limit: 20 })).data ?? [];
+        completedReply = msgs.some((m: any) => replyCompletedAt(m, promptAt));
+      } catch {
+        completedReply = false;
+      }
+      inactivePolls = completedReply ? inactivePolls + 1 : 0;
+    } else {
+      inactivePolls = 0;
+    }
+
+    if (legacyIdle || inactivePolls >= 2) {
+      let failed = session?.outcome === "failed";
+      if (!failed && !legacyIdle) {
+        try {
+          const msgs = (await oc.messages(sessionId, { order: "desc", limit: 5 })).data ?? [];
+          const last = msgs.find((m: any) => replyCompletedAt(m, promptAt));
+          failed = Boolean(last && last.finish && last.finish !== "stop");
+        } catch {
+          /* keep completed */
+        }
+      }
       return {
-        status: session.outcome === "failed" ? "failed" : "completed",
+        status: failed ? "failed" : "completed",
         session,
         promptAt,
         approvedCount: approved,

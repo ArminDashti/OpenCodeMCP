@@ -8,7 +8,7 @@ import { readService, resolveEndpoint } from "./bootstrap.js";
 import { OpenCode } from "./opencode.js";
 import { loadStore, aggregate, aggregateModels, recordScore, splitModelRef } from "./scores.js";
 import { PROVIDERS } from "./providers.js";
-import { compactSession, renderTranscript, waitForIdle, countToolCalls, collectReply } from "./render.js";
+import { compactSession, renderTranscript, waitForIdle, countToolCalls, collectReply, deriveOutcome } from "./render.js";
 import { openDb, insertLog, listLogs, clearLogs, getSetting, setSetting, upsertApiKey, listApiKeys, deleteApiKey, getApiKey } from "./db.js";
 import { SKILL_MARKDOWN, SKILL_NAME, SKILL_VERSION, skillFile } from "./skill.js";
 
@@ -693,7 +693,7 @@ async function taskDetailPayload(sessionID: string, ts?: number): Promise<Record
       toolCalls: countToolCalls(messages, since || 0),
       cost: session?.cost ?? 0,
       tokens: session?.tokens ?? {},
-      outcome: session?.outcome ?? null,
+      outcome: deriveOutcome(session, messages, false) ?? null,
       transcript,
       messageCount: messages.length,
     },

@@ -106,8 +106,10 @@ Supported provider ids (use as \`provider\` in \`assign_task\` / \`models_list\`
 ## Notes
 
 - Everything lives under \`/api/*\` on the OpenCode server; auth is HTTP basic.
-- \`POST /api/session/{id}/prompt\` is asynchronous — a run is finished when
-  \`session.time.idle >= promptTime\`.
+- \`POST /api/session/{id}/prompt\` takes \`{"prompt": {"text": "…"}}\` (plus optional
+  \`delivery\`/\`metadata\`) and is asynchronous — a run is finished when the session
+  leaves \`GET /api/session/active\` and a \`time.completed\` reply exists at/after the
+  prompt time (\`session.time.idle >= promptTime\` on older builds).
 - \`GET /api/permission/request\` is location-scoped: query it with the session's
   directory or a blocked run is invisible.
 - Model ids are \`provider/modelID\`; the first slash separates provider from model.

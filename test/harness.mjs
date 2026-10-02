@@ -119,9 +119,9 @@ async function main() {
   // --- tools/list ---------------------------------------------------------
   const list = await send("tools/list", {}, 20_000);
   const names = (list.tools ?? []).map((t) => t.name).sort();
-  const expected = ["assign_task", "fetch_session", "models_list", "score_to_agent"];
+  const expected = ["assign_task", "fetch_session", "models_list", "providers_list", "score_to_agent"];
   check(
-    "tools/list exposes exactly the 4 tools",
+    "tools/list exposes exactly the 5 tools",
     JSON.stringify(names) === JSON.stringify(expected),
     names.join(","),
   );

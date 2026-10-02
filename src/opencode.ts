@@ -154,7 +154,17 @@ export class OpenCode {
   // ---- server -------------------------------------------------------------
 
   async info(): Promise<any> {
-    return this.request("GET", "/api/info");
+    const res = await this.request<any>("GET", "/api/info");
+    if (res && typeof res === "object") return res;
+    // Some builds answer /api/info with the SPA shell; /global/health has the
+    // version and a health flag instead.
+    try {
+      const health = await this.request<any>("GET", "/global/health");
+      if (health && typeof health === "object") return health;
+    } catch {
+      /* fall through */
+    }
+    return { healthy: null, baseUrl: this.cfg.baseUrl };
   }
 
   // ---- models / agents ----------------------------------------------------
@@ -168,10 +178,28 @@ export class OpenCode {
   }
 
   async defaultModel(directory?: string): Promise<any | undefined> {
-    const res = await this.request<any>("GET", "/api/model/default", {
-      query: this.locationQuery(directory),
-    });
-    return res?.data;
+    try {
+      const res = await this.request<any>("GET", "/api/model/default", {
+        query: this.locationQuery(directory),
+      });
+      const data = res && typeof res === "object" ? (res.data ?? res) : undefined;
+      if (data && (data.providerID || data.modelID || data.id)) return data;
+    } catch {
+      /* builds without the endpoint fall through to the config */
+    }
+    // Newer builds drop /api/model/default (the SPA answers instead); the
+    // resolved config still carries the default as "provider/modelID".
+    try {
+      const cfg = await this.request<any>("GET", "/config");
+      const spec = typeof cfg?.model === "string" ? cfg.model : "";
+      const slash = spec.indexOf("/");
+      if (slash > 0 && slash < spec.length - 1) {
+        return { providerID: spec.slice(0, slash), modelID: spec.slice(slash + 1) };
+      }
+    } catch {
+      /* no default available */
+    }
+    return undefined;
   }
 
   async agents(directory?: string): Promise<any[]> {
@@ -245,8 +273,11 @@ export class OpenCode {
       metadata?: Record<string, unknown>;
     },
   ): Promise<any> {
-    const payload: Record<string, unknown> = { text: body.text };
-    if (body.files?.length) payload.files = body.files;
+    // OpenCode ≥1.18 nests the text under `prompt` (a PromptInput) and keeps
+    // `files` inside it; the envelope carries delivery/metadata.
+    const prompt: Record<string, unknown> = { text: body.text };
+    if (body.files?.length) prompt.files = body.files;
+    const payload: Record<string, unknown> = { prompt };
     if (body.delivery) payload.delivery = body.delivery;
     if (body.metadata) payload.metadata = body.metadata;
     const res = await this.request<any>(
@@ -254,7 +285,13 @@ export class OpenCode {
       `/api/session/${encodeURIComponent(sessionId)}/prompt`,
       { body: payload },
     );
-    return res?.data ?? res;
+    const data = res?.data ?? res;
+    // Newer builds stamp the admission time as top-level `timeCreated`;
+    // normalise it to `time.created` so callers can stay version-agnostic.
+    if (data && typeof data === "object" && data.timeCreated != null && !data.time?.created) {
+      data.time = { ...(data.time ?? {}), created: data.timeCreated };
+    }
+    return data;
   }
 
   async messages(

@@ -148,14 +148,19 @@ The dashboard (`opencodemcp webui`) includes:
 
 No password in the config: the server reads the background service's own credential
 (`~/.config/opencode/service.json`, written by `opencode service`) and starts that
-service if it is not running. Set the env vars below only to point somewhere else.
+service if it is not running. Builds that no longer ship `opencode service` fall back
+to a detached `opencode serve` on the stored api port (pid in
+`~/.opencode-mcp/serve.pid`, managed by `opencodemcp service start|stop`). Set the env
+vars below only to point somewhere else.
 
 ## How it finds the OpenCode server
 
 1. `OPENCODE_URL` / `OPENCODE_SERVER_URL` if set (explicit; never autostarts).
 2. The background service from `~/.config/opencode/service.json` — `{ port, password }`.
 3. `opencode service start`, then the freshly written `service.json`.
-4. Otherwise `http://127.0.0.1:4096`.
+4. A detached `opencode serve` on the stored api port (fallback for builds without
+   `opencode service`), started automatically when autostart is enabled.
+5. Otherwise `http://127.0.0.1:4096`.
 
 `opencode serve` instances also work — point `OPENCODE_URL` at them and pass the password
 they print (`OPENCODE_PASSWORD`); that password is machine-stored and stable, but it differs
@@ -257,9 +262,11 @@ not provide — model catalogues, score-based agent ranking, and polling of deta
 - Everything lives under `/api/*`; unknown paths fall back to the web app's HTML.
 - Auth is HTTP basic (`opencode:<password>`); the password is machine-stored and printed
   only the first time a `serve` process generates it.
-- `POST /api/session/{id}/prompt` is asynchronous — it returns an inbox item. A run is
-  finished when `session.time.idle >= promptTime`; transcripts then gain an `idle` message
-  carrying `outcome`.
+- `POST /api/session/{id}/prompt` is asynchronous — it returns an inbox item (`timeCreated`).
+  The body nests the text: `{"prompt": {"text": "…", "files": [...]}, "delivery": "steer"}`.
+  A run is finished when the session drops out of `GET /api/session/active` and a reply
+  stamped `time.completed` exists at/after the prompt time; builds that still expose
+  `session.time.idle >= promptTime` are honoured unchanged.
 - `limit` above 200 is rejected (HTTP 400) on session and message listings — the client
   clamps instead of tripping it.
 - `GET /api/permission/request` is **location-scoped**: it must be queried with the
@@ -269,8 +276,8 @@ not provide — model catalogues, score-based agent ranking, and polling of deta
 
 ## Tests
 
-`npm test` drives the built server over MCP stdio and exercises all four tools against a
+`npm test` drives the built server over MCP stdio and exercises all five tools against a
 running OpenCode: session creation, blocking and detached runs, transcript polling, scoring,
-error surfacing, output-budget trimming and permission handling. It needs model access; set
+error surfacing and output-budget trimming. It needs model access; set
 `OPENCODE_URL` / `OPENCODE_PASSWORD` to test against a specific `serve` instance, otherwise
 it uses the discovered background service.
