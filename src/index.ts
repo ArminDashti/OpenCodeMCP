@@ -29,6 +29,7 @@ import {
   collectReply,
   compactSession,
   countToolCalls,
+  deriveOutcome,
   renderTranscript,
   waitForIdle,
 } from "./render.js";
@@ -287,7 +288,7 @@ server.registerTool(
       const result: Record<string, unknown> = {
         ...base,
         status: wait.status,
-        outcome: session?.outcome ?? null,
+        outcome: deriveOutcome(session, messages, wait.status === "timeout"),
         title: session?.title ?? null,
         sessionAgent: session?.agent ?? null,
         sessionModel: session?.model
@@ -591,6 +592,11 @@ server.registerTool(
         ).data ?? [];
         payload.messages = renderTranscript(messages, { maxMessages: 300 });
         payload.messageCount = messages.length;
+        (payload.session as Record<string, unknown>).outcome = deriveOutcome(
+          session,
+          messages,
+          payload.running === true,
+        );
         fitArray(payload, "messages", "head", 2);
         payload.messagesReturned = (payload.messages as unknown[]).length;
       }

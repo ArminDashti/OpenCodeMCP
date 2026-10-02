@@ -18,7 +18,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadConfig } from "./config.js";
-import { readService, runServiceCommand, serviceFilePath } from "./bootstrap.js";
+import {
+  readService,
+  runServiceCommand,
+  serviceFilePath,
+  servePidFile,
+  startServeFallback,
+  stopServeFallback,
+} from "./bootstrap.js";
 import {
   DEFAULT_API_PORT,
   DEFAULT_WEBUI_PORT,
@@ -86,7 +93,7 @@ async function serviceStatusJson(): Promise<void> {
   const cfg = loadConfig();
   const svc = readService();
   const url = svc ? `http://127.0.0.1:${svc.port}` : cfg.baseUrl;
-  const reachable = probe(url, svc?.password ?? cfg.password);
+  const reachable = await probe(url, svc?.password ?? cfg.password);
   console.log(
     JSON.stringify(
       {
@@ -96,6 +103,7 @@ async function serviceStatusJson(): Promise<void> {
         servicePort: svc?.port ?? null,
         hasPassword: Boolean(svc?.password ?? cfg.password),
         reachable,
+        detachedServePidFile: servePidFile(),
       },
       null,
       2,
@@ -108,9 +116,11 @@ async function serviceStatusText(): Promise<void> {
   const cfg = loadConfig();
   const svc = readService();
   if (!svc) {
-    console.log(`service: not configured (no ${serviceFilePath()})`);
-    console.log(`fallback url: ${cfg.baseUrl}`);
-    process.exitCode = 1;
+    const ok = await probe(cfg.baseUrl, cfg.password);
+    console.log(`service: no ${serviceFilePath()} (this build has no "opencode service")`);
+    console.log(`serve: ${ok ? "running" : "not reachable"} → ${cfg.baseUrl}`);
+    console.log(`pid file: ${servePidFile()} (${fs.existsSync(servePidFile()) ? "present" : "absent"})`);
+    if (!ok) process.exitCode = 1;
     return;
   }
   const url = `http://127.0.0.1:${svc.port}`;
@@ -121,11 +131,33 @@ async function serviceStatusText(): Promise<void> {
 }
 
 function runServiceVerb(verb: "start" | "stop" | "restart"): void {
-  try {
-    execSync(`opencode service ${verb}`, { stdio: "inherit", timeout: 90_000 });
-  } catch {
-    fail(`"opencode service ${verb}" failed (is opencode installed and on PATH?)`);
+  if (runServiceCommand(verb)) return;
+  // Builds without `opencode service`: manage a detached `opencode serve` instead.
+  const cfg = loadConfig();
+  const port = Number(new URL(cfg.baseUrl).port) || 4096;
+  if (verb === "stop") {
+    if (stopServeFallback()) {
+      console.log(`stopped the detached opencode serve on port ${port}`);
+      return;
+    }
+    fail(`"opencode service ${verb}" failed and no detached serve was recorded in ${servePidFile()}`);
   }
+  if (verb === "restart") {
+    stopServeFallback();
+  }
+  void (async () => {
+    if (verb === "start" && (await probe(cfg.baseUrl, cfg.password))) {
+      console.log(`"opencode service" unavailable, but an OpenCode server is already running at ${cfg.baseUrl}`);
+      console.log(`pid file: ${servePidFile()} (not managed — this server was started elsewhere)`);
+      return;
+    }
+    if (startServeFallback(port)) {
+      console.log(`started a detached "opencode serve --port ${port}" ("opencode service" unavailable)`);
+      console.log(`pid recorded in ${servePidFile()}`);
+      return;
+    }
+    fail(`"opencode service ${verb}" failed (is opencode installed and on PATH?)`);
+  })();
 }
 
 async function doctor(): Promise<void> {
@@ -152,14 +184,20 @@ async function doctor(): Promise<void> {
   });
 
   const svc = readService();
-  out.push({
-    name: "service.json present",
-    ok: svc !== null,
-    detail: svc ? `${svc.file} (port ${svc.port})` : serviceFilePath(),
-  });
-
   const url = svc ? `http://127.0.0.1:${svc.port}` : cfg.baseUrl;
   const reachable = await probe(url, svc?.password ?? cfg.password);
+
+  const hasServePid = fs.existsSync(servePidFile());
+  out.push({
+    name: "service.json present",
+    ok: svc !== null || hasServePid || reachable,
+    detail: svc
+      ? `${svc.file} (port ${svc.port})`
+      : reachable
+        ? `${serviceFilePath()} absent, but OpenCode is reachable at ${url}`
+        : `${serviceFilePath()} — run: opencodemcp service start`,
+  });
+
   out.push({
     name: "server reachable",
     ok: reachable,

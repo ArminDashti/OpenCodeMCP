@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 
 import type { Config } from "./config.js";
 
@@ -47,6 +47,68 @@ export function runServiceCommand(verb: "start" | "restart" | "stop"): boolean {
     return false;
   }
 }
+
+/** PID file for the `opencode serve` fallback (newer builds drop `opencode service`). */
+export function servePidFile(): string {
+  return path.join(os.homedir(), ".opencode-mcp", "serve.pid");
+}
+
+function portFromBaseUrl(baseUrl: string): number {
+  try {
+    const port = Number(new URL(baseUrl).port);
+    return Number.isInteger(port) && port > 0 ? port : 4096;
+  } catch {
+    return 4096;
+  }
+}
+
+/**
+ * Start a detached `opencode serve` on `port` — the fallback for OpenCode
+ * builds that no longer ship the `opencode service` subcommand.
+ */
+export function startServeFallback(port: number): boolean {
+  try {
+    const child = spawn(`opencode serve --port ${port}`, {
+      detached: true,
+      stdio: "ignore",
+      shell: true,
+      windowsHide: true,
+    });
+    child.on("error", () => {
+      /* surfaced through the readiness probe, not here */
+    });
+    child.unref();
+    fs.mkdirSync(path.dirname(servePidFile()), { recursive: true });
+    fs.writeFileSync(servePidFile(), JSON.stringify({ pid: child.pid, port }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Stop the `opencode serve` fallback process started by startServeFallback. */
+export function stopServeFallback(): boolean {
+  let pid = 0;
+  try {
+    pid = Number(JSON.parse(fs.readFileSync(servePidFile(), "utf8"))?.pid);
+  } catch {
+    return false;
+  }
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    if (process.platform === "win32") {
+      execSync(`taskkill /PID ${pid} /T /F`, { stdio: "pipe" });
+    } else {
+      process.kill(pid, "SIGTERM");
+    }
+    fs.rmSync(servePidFile(), { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 type ProbeState = "ok" | "unauthorized" | "unreachable";
 
@@ -147,9 +209,31 @@ export async function resolveEndpoint(cfg: Config): Promise<ResolvedEndpoint> {
         }
       }
     }
-    notes.push(
-      'no service.json and "opencode service start" did not produce a reachable server',
-    );
+    // Builds without `opencode service` never write service.json; fall back to
+    // a detached `opencode serve` on the configured port.
+    const state = await probe(cfg.baseUrl, cfg.password);
+    if (state !== "ok") {
+      if (startServeFallback(portFromBaseUrl(cfg.baseUrl))) {
+        for (let i = 0; i < 40 && (await probe(cfg.baseUrl, cfg.password)) !== "ok"; i++) {
+          await sleep(500);
+        }
+        if ((await probe(cfg.baseUrl, cfg.password)) === "ok") {
+          notes.push("started a detached `opencode serve` (no `opencode service` command)");
+          return {
+            baseUrl: cfg.baseUrl,
+            password: cfg.password,
+            source: "detached opencode serve, started by MCP",
+            notes,
+          };
+        }
+      }
+      notes.push(
+        'no service.json and neither "opencode service start" nor "opencode serve" produced a reachable server',
+      );
+    } else {
+      notes.push(`OpenCode already reachable at ${cfg.baseUrl} (no service.json in this build)`);
+      return { baseUrl: cfg.baseUrl, password: cfg.password, source: "detached opencode serve", notes };
+    }
   }
 
   return { baseUrl: cfg.baseUrl, password: cfg.password, source: "default", notes };
