@@ -7,7 +7,7 @@ import { loadCliConfig, saveCliConfig } from "./cli-config.js";
 import { readService, resolveEndpoint } from "./bootstrap.js";
 import { OpenCode } from "./opencode.js";
 import { loadStore, aggregate, aggregateModels, recordScore, splitModelRef } from "./scores.js";
-import { PROVIDERS } from "./providers.js";
+import { PROVIDERS, providerInputFields } from "./providers.js";
 import { compactSession, renderTranscript, waitForIdle, countToolCalls, collectReply, deriveOutcome } from "./render.js";
 import { openDb, insertLog, listLogs, clearLogs, getSetting, setSetting, upsertApiKey, listApiKeys, deleteApiKey, getApiKey } from "./db.js";
 import { SKILL_MARKDOWN, SKILL_NAME, SKILL_VERSION, skillFile } from "./skill.js";
@@ -205,6 +205,11 @@ pre{padding:12px;overflow:auto;font-size:12px;max-height:420px}
 .prov-card h4{margin:0;font-size:15px}
 .prov-card .actions{display:flex;gap:6px;margin-top:4px}
 .key-input{width:100%;font-family:monospace;font-size:12px}
+.field-tag{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:2px 7px;border-radius:999px;margin-left:6px}
+.field-tag.req{background:#fee2e2;color:#991b1b}[data-theme="dark"] .field-tag.req{background:#7f1d1d;color:#fecaca}
+.field-tag.opt{background:var(--chip);color:var(--muted)}
+.prov-detail-head{display:flex;align-items:flex-start;gap:14px;margin-bottom:12px}
+.prov-detail-head img{width:36px;height:36px}
 </style></head><body data-density="comfortable">
 <div class="app">
 <aside>
@@ -262,12 +267,14 @@ pre{padding:12px;overflow:auto;font-size:12px;max-height:420px}
 <section class="page" id="page-providers">
 <div class="card">
 <div class="toolbar">
-<input id="provSearch" placeholder="search providers…" style="flex:1;min-width:200px"/>
+<label class="hint" for="provSelect">Provider</label>
+<select id="provSelect" style="min-width:min(320px,100%)"></select>
+<input id="provSearch" placeholder="filter list…" style="flex:1;min-width:140px"/>
 <span class="hint" id="provCount"></span>
 <button class="btn" id="provReload">↻ Reload</button>
 </div>
-<div class="cards" id="provGrid" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr))"></div>
-<p class="hint">Color logos: <code>assets/providers/*.svg</code>. Endpoints verified 2026-09-30 against each provider's official docs — see <code>/api/providers</code>.</p>
+<div id="provDetail"></div>
+<p class="hint">Pick a provider to configure credentials. Logos: <code>assets/providers/*.svg</code>. Catalog: <code>/api/providers</code>.</p>
 </div>
 </section>
 
@@ -374,7 +381,8 @@ pre{padding:12px;overflow:auto;font-size:12px;max-height:420px}
 <div class="modal" id="modal"><div class="box"><div class="toolbar"><b id="mTitle">detail</b><span class="spacer"></span><button class="btn" id="mClose">✕</button></div><div id="mBody"></div></div></div>
 <script>
 const $=id=>document.getElementById(id);
-const state={page:'dashboard',settings:null,tasks:[],logLevel:'all',pgTool:'assign_task',setTab:'appearance',timer:null,provKeys:{}};
+const state={page:'dashboard',settings:null,tasks:[],logLevel:'all',pgTool:'assign_task',setTab:'appearance',timer:null,provList:[],provKeys:{},provConfig:{}};
+function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 async function j(u,o){const r=await fetch(u,o);const t=await r.text();try{return JSON.parse(t)}catch{return {raw:t,http:r.status}}}
 function pad(n){return String(n).padStart(2,'0')}
 function fmtDT(ts){if(ts==null||ts==='')return '—';const d=new Date(Number(ts));if(isNaN(d.getTime()))return '—';return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+'-'+pad(d.getMinutes())+'-'+pad(d.getSeconds())}
@@ -417,27 +425,48 @@ $('taskRows').addEventListener('click',e=>{const tr=e.target.closest('tr');if(!t
 const u='/task?sessionID='+encodeURIComponent(t.sessionID)+(t.assignedAt!=null?'&ts='+encodeURIComponent(t.assignedAt):'');window.open(u,'_blank')});
 $('mClose').onclick=()=>$('modal').classList.remove('open');$('modal').addEventListener('click',e=>{if(e.target.id==='modal')$('modal').classList.remove('open')});
 // providers
+function renderProvDetail(){const id=$('provSelect').value;const p=state.provList.find(x=>x.id===id);
+if(!p){$('provDetail').innerHTML='<p class="hint">Select a provider from the dropdown.</p>';return}
+const cfg=state.provConfig[id]||{};const keyMeta=state.provKeys[id];
+const fields=p.inputFields||[];
+let form='';
+if(!fields.length){form='<p class="hint">No credentials required for this provider.</p>'}
+else{form='<div class="form">'+fields.map(f=>{
+const tag=f.required?'<span class="field-tag req">required</span>':'<span class="field-tag opt">optional</span>';
+const inpType=f.inputType==='secret'?'password':(f.inputType==='url'?'url':'text');
+const val=f.id==='baseUrl'?(cfg.baseUrl||''):'';
+const ph=esc(f.placeholder||'');
+return '<label>'+esc(f.label)+tag+'</label><div><input class="key-input" id="prov_f_'+f.id+'" type="'+inpType+'" placeholder="'+ph+'" value="'+esc(val)+'" autocomplete="off"/>'+(f.hint?'<p class="hint">'+esc(f.hint)+(f.envVar?' <code>'+esc(f.envVar)+'</code>':'')+'</p>':'')+'</div>';
+}).join('')+'</div>'}
+const keyBadge=keyMeta?'<span class="badge hi">key saved</span>':'<span class="hint">no key saved</span>';
+$('provDetail').innerHTML='<div class="prov-detail-head"><img src="/assets/providers/'+esc(p.id)+'.svg" alt=""/><div><h3 style="margin:0">'+esc(p.label)+'</h3><p class="hint"><code>'+esc(p.id)+'</code> • '+esc(p.kind)+' • '+keyBadge+'</p></div></div><p style="font-size:13px">'+esc(p.note)+'</p><p class="hint">'+esc(p.baseUrl)+' • <a href="'+esc(p.docs)+'" target="_blank" rel="noopener">docs</a></p>'+form+'<div class="toolbar"><button class="btn primary" id="provSave">Save</button>'+(keyMeta?'<button class="btn" id="provDelete">Remove saved key</button>':'')+'<span class="hint" id="provMsg"></span></div>';
+$('provSave').onclick=()=>saveProvConfig(p);
+const del=$('provDelete');if(del)del.onclick=()=>deleteKey(p.id);
+}
+async function loadProvConfig(id){try{const d=await j('/api/providers/'+encodeURIComponent(id)+'/config');state.provConfig[id]=d}catch{state.provConfig[id]={}}}
 async function loadProviders(){const q=($('provSearch').value||'').trim().toLowerCase();
-try{const d=await j('/api/providers');let rows=d.providers||[];
+try{const [cat,keys]=await Promise.all([j('/api/providers'),j('/api/apikeys')]);
+let rows=cat.providers||[];state.provList=rows;
+state.provKeys={};for(const k of keys.keys||[])state.provKeys[k.provider]=k;
 if(q)rows=rows.filter(p=>((p.id||'')+' '+(p.label||'')+' '+(p.baseUrl||'')).toLowerCase().includes(q));
-$('provCount').textContent=rows.length+' of '+(d.count??rows.length)+' providers';
-$('provGrid').innerHTML=rows.map(p=>{
-const key=state.provKeys[p.id];
-const keyStatus=key?'<span class="badge hi">key saved</span>':'<span class="hint">no key</span>';
-return '<div class="prov-card"><div class="logo-row"><img src="/assets/providers/'+p.id+'.svg" alt="" width="28" height="28"/><h4>'+p.label+'</h4></div><div class="v" style="font-size:13px"><code>'+p.id+'</code></div><p class="hint">'+p.baseUrl+'</p><p style="font-size:12px">'+p.note+'</p><p class="hint">key: <code>'+(p.envKey||'none')+'</code> '+keyStatus+'</p><div class="actions"><button class="btn" data-prov="'+p.id+'" data-action="import">Import key</button>'+(key?'<button class="btn" data-prov="'+p.id+'" data-action="delete">Delete</button>':'')+'</div></div>';
-}).join('')||'<p class="hint">no providers match</p>';
-// bind import/delete buttons
-document.querySelectorAll('#provGrid [data-action]').forEach(btn=>{btn.addEventListener('click',()=>{const prov=btn.dataset.prov;const action=btn.dataset.action;if(action==='import')openKeyModal(prov);if(action==='delete')deleteKey(prov);});});
-}catch(e){$('provGrid').innerHTML='error: '+e;clientLog('error','providers load: '+e)}
+$('provCount').textContent=rows.length+' of '+(cat.count??state.provList.length);
+const prev=$('provSelect').value;
+$('provSelect').innerHTML=rows.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.label)+' ('+esc(p.id)+')</option>').join('')||'<option value="">—</option>';
+if(prev&&rows.some(p=>p.id===prev))$('provSelect').value=prev;else if(rows[0])$('provSelect').value=rows[0].id;
+if($('provSelect').value)await loadProvConfig($('provSelect').value);
+renderProvDetail();
+}catch(e){$('provDetail').innerHTML='error: '+esc(e);clientLog('error','providers load: '+e)}
 }
-function openKeyModal(proId){const p=PROVIDERS.find(x=>x.id===proId);if(!p)return;
-$('mTitle').textContent='Import API key — '+p.label;
-$('mBody').innerHTML='<p class="hint">Enter the API key for <b>'+esc(p.label)+'</b>. It is stored locally in the SQLite database and used as <code>'+esc(p.envKey||'custom')+'</code>.</p><input type="password" id="keyInput" class="key-input" placeholder="sk-..." style="width:100%;margin:10px 0"/><div class="toolbar"><button class="btn primary" id="keySave">Save key</button><button class="btn" id="keyCancel">Cancel</button><span class="hint" id="keyMsg"></span></div>';
-$('modal').classList.add('open');
-$('keyCancel').onclick=()=>$('modal').classList.remove('open');
-$('keySave').onclick=async()=>{const val=$('keyInput').value.trim();if(!val){$('keyMsg').textContent='key is required';return}try{const r=await fetch('/api/apikeys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:provId,label:p.label,envKey:p.envKey||'custom',key:val})});const d=await r.json();if(d.error){$('keyMsg').textContent='error: '+d.error}else{$('modal').classList.remove('open');loadProviders();clientLog('info','API key saved for '+provId)}}catch(e){$('keyMsg').textContent='error: '+e}};
+async function saveProvConfig(p){const fields=p.inputFields||[];const body={provider:p.id};const values={};
+for(const f of fields){const el=$('prov_f_'+f.id);const v=el?el.value.trim():'';if(f.required&&!v){$('provMsg').textContent=f.label+' is required';return}if(v)values[f.id]=v}
+if(values.apiKey)body.key=values.apiKey;if(values.baseUrl)body.baseUrl=values.baseUrl;
+if(!body.key&&!body.baseUrl){$('provMsg').textContent='Enter at least one value to save';return}
+$('provMsg').textContent='saving…';
+try{const d=await j('/api/apikeys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+if(d.error){$('provMsg').textContent='error: '+d.error}else{$('provMsg').textContent='saved ✓';await loadProviders();clientLog('info','provider config saved for '+p.id)}
+}catch(e){$('provMsg').textContent='error: '+e}
 }
-async function deleteKey(provId){if(!confirm('Delete saved key for '+provId+'?'))return;try{await fetch('/api/apikeys/'+encodeURIComponent(provId),{method:'DELETE'});loadProviders();clientLog('info','API key deleted for '+provId)}catch(e){clientLog('error','delete key: '+e)}}
+async function deleteKey(provId){if(!confirm('Delete saved key for '+provId+'?'))return;try{await fetch('/api/apikeys/'+encodeURIComponent(provId),{method:'DELETE'});await loadProviders();clientLog('info','API key deleted for '+provId)}catch(e){clientLog('error','delete key: '+e)}}
 // skill
 function loadSkill(){$('skillContent').textContent=SKILL_MARKDOWN}
 $('skillCopy').onclick=async()=>{try{await navigator.clipboard.writeText(SKILL_MARKDOWN);$('skillMsg').textContent='copied ✓'}catch(e){$('skillMsg').textContent='copy failed: '+e}};
@@ -485,6 +514,7 @@ async function boot(){try{const s=await j('/api/settings');state.settings=s.sett
 async function load(){if(state.page==='dashboard')loadDashboard();if(state.page==='tasks')loadTasks();if(state.page==='providers')loadProviders();if(state.page==='skill')loadSkill();if(state.page==='stats')loadStats();if(state.page==='logs')loadLogs();if(state.page==='settings')loadSettingsUI()}
 $('refreshBtn').onclick=load;$('taskReload').onclick=loadTasks;$('provReload').onclick=loadProviders;$('logReload').onclick=loadLogs;
 $('taskSearch').addEventListener('input',loadTasks);$('provSearch').addEventListener('input',loadProviders);$('logSearch').addEventListener('input',loadLogs);$('taskLimit').addEventListener('change',loadTasks);
+$('provSelect').addEventListener('change',async()=>{if($('provSelect').value)await loadProvConfig($('provSelect').value);renderProvDetail()});
 $('logClear').onclick=async()=>{await j('/api/logs/clear',{method:'POST'});loadLogs()};
 boot();
 </script></body></html>`;
@@ -812,7 +842,30 @@ export function startWebui(port: number): Promise<http.Server> {
 
       // ---- providers (catalog: color logos + verified endpoints) ----
       if (p === "/api/providers") {
-        json(res, 200, { count: PROVIDERS.length, providers: PROVIDERS });
+        const providers = PROVIDERS.map((pr) => ({
+          ...pr,
+          inputFields: providerInputFields(pr),
+        }));
+        json(res, 200, { count: providers.length, providers });
+        return;
+      }
+      const provConfigMatch = /^\/api\/providers\/([^/]+)\/config$/.exec(p);
+      if (provConfigMatch && req.method === "GET") {
+        const id = decodeURIComponent(provConfigMatch[1]!);
+        const prov = PROVIDERS.find((pr) => pr.id === id);
+        if (!prov) {
+          json(res, 404, { error: `unknown provider ${id}` });
+          return;
+        }
+        const keyRow = getApiKey(id);
+        const baseUrl = getSetting(`provider.${id}.baseUrl`) ?? "";
+        json(res, 200, {
+          provider: id,
+          hasKey: Boolean(keyRow),
+          baseUrl,
+          envKey: prov.envKey,
+          updatedAt: keyRow?.updatedAt ?? null,
+        });
         return;
       }
       if (p.startsWith("/assets/providers/") && req.method === "GET") {
@@ -864,16 +917,26 @@ export function startWebui(port: number): Promise<http.Server> {
         const body = await readBody(req);
         const provider = String(body.provider ?? "").trim();
         const key = String(body.key ?? "").trim();
-        if (!provider || !key) {
-          json(res, 400, { error: "provider and key are required" });
+        const baseUrl = String(body.baseUrl ?? "").trim();
+        if (!provider) {
+          json(res, 400, { error: "provider is required" });
+          return;
+        }
+        if (!key && !baseUrl) {
+          json(res, 400, { error: "key or baseUrl is required" });
           return;
         }
         const prov = PROVIDERS.find((pr) => pr.id === provider);
         const label = prov?.label ?? provider;
-        const envKey = prov?.envKey ?? "custom";
-        upsertApiKey(provider, label, envKey);
-        pushLog("info", `API key saved for ${provider}`, "api");
-        json(res, 200, { ok: true, provider });
+        const envKey = prov?.envKey ?? (key ? "custom" : prov?.envAliases?.[0] ?? "custom");
+        if (key) {
+          upsertApiKey(provider, label, envKey);
+        }
+        if (baseUrl) {
+          setSetting(`provider.${provider}.baseUrl`, baseUrl);
+        }
+        pushLog("info", `Provider config saved for ${provider}`, "api");
+        json(res, 200, { ok: true, provider, savedKey: Boolean(key), savedBaseUrl: Boolean(baseUrl) });
         return;
       }
       if (p.startsWith("/api/apikeys/") && req.method === "DELETE") {

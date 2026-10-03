@@ -46,6 +46,66 @@ export interface ProviderInfo {
   note: string;
 }
 
+/** WebUI form field for provider credentials / options. */
+export interface ProviderInputField {
+  id: string;
+  label: string;
+  envVar?: string;
+  inputType: "secret" | "url" | "text";
+  required: boolean;
+  placeholder?: string;
+  hint?: string;
+}
+
+/** Required vs optional inputs shown after the user picks a provider. */
+export function providerInputFields(p: ProviderInfo): ProviderInputField[] {
+  const fields: ProviderInputField[] = [];
+  if (p.kind === "custom") {
+    fields.push({
+      id: "baseUrl",
+      label: "Base URL",
+      inputType: "url",
+      required: true,
+      placeholder: "http://127.0.0.1:1234/v1",
+      hint: "OpenAI-compatible API root (include /v1 when the server expects it).",
+    });
+    fields.push({
+      id: "apiKey",
+      label: "API key",
+      inputType: "secret",
+      required: false,
+      placeholder: "optional",
+      hint: "Only if your local or proxy server requires authentication.",
+    });
+    return fields;
+  }
+  if (p.envKey) {
+    fields.push({
+      id: "apiKey",
+      label: "API key",
+      envVar: p.envKey,
+      inputType: "secret",
+      required: true,
+      placeholder: "sk-…",
+      hint: `Saved locally; use as ${p.envKey} when running OpenCode.`,
+    });
+  }
+  if (p.envAliases?.length) {
+    for (const alias of p.envAliases) {
+      fields.push({
+        id: `env_${alias}`,
+        label: alias,
+        envVar: alias,
+        inputType: "secret",
+        required: false,
+        placeholder: "optional",
+        hint: "Alternate credential accepted by this provider.",
+      });
+    }
+  }
+  return fields;
+}
+
 export const PROVIDERS: ProviderInfo[] = [
   {
     id: "openai",
