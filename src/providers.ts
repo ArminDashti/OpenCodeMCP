@@ -1,7 +1,7 @@
 /**
  * Provider catalog for opencode-mcp.
  *
- * Every entry was verified against the provider's official docs on 2026-09-30
+ * Every entry was verified against the provider's official docs on 2026-10-04
  * (see `docs` + `sources`). Logos are transparent-background SVGs stored in
  * `assets/providers/` so the WebUI works offline:
  *   - simple-icons (jsdelivr, transparent monochrome): openai, claude
@@ -224,11 +224,15 @@ export const PROVIDERS: ProviderInfo[] = [
       messages: "https://opencode.ai/zen/go/v1/messages",
       models: "https://opencode.ai/zen/go/v1/models",
     },
-    envKey: "OPENCODE_API_KEY",
-    docs: "https://opencode.ai/docs/go",
+    envKey: "OPENCODE_GO_API_KEY",
+    envAliases: ["OPENCODE_API_KEY"],
+    docs: "https://opencode.ai/v2/docs/console/go",
     logo: "assets/providers/opencode-go.svg",
     logoSource: "lobe-icons opencode mark (transparent); official brand: https://opencode.ai/brand",
-    note: "$10/$40 monthly plans for open coding models. Config model: opencode-go/<model-id>.",
+    note:
+      "Go ($10/mo) or Go Plus ($40/mo) via OpenCode Console; /connect in the TUI. " +
+      "OpenAI-compatible at zen/go/v1. Model id opencode-go/<slug>. " +
+      "Send x-opencode-session per conversation (see Go docs).",
   },
   {
     id: "ollama",

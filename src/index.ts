@@ -26,6 +26,13 @@ import { OpenCode, OpenCodeError, parseModelRef, type ModelRef } from "./opencod
 import { aggregateModels, loadStore, recordScore, splitModelRef } from "./scores.js";
 import { PROVIDERS } from "./providers.js";
 import {
+  catalogFallbackRows,
+  enrichModelRow,
+  enterpriseConsoleUrl,
+  loadEnterpriseDoc,
+} from "./enterprise-catalog.js";
+import { GO_CONSOLE_URL, GO_DOCS_URL } from "./go-plan.js";
+import {
   collectReply,
   compactSession,
   countToolCalls,
@@ -353,46 +360,28 @@ server.registerTool(
   },
   async (args) => {
     try {
+      const doc = loadEnterpriseDoc();
       const [models, def] = await Promise.all([oc.models(), oc.defaultModel()]);
       const defaultKey = def ? `${def.providerID}/${def.modelID ?? def.id}` : null;
       const needle = args.search?.toLowerCase();
       const statsByModel = new Map(aggregateModels(loadStore(cfg.scoresFile).records).map((s) => [s.model, s]));
 
-      let rows = models.map((m: any) => {
+      let rows: Record<string, unknown>[] = models.map((m: any) => {
         const id = `${m.providerID}/${m.id}`;
-        const st = statsByModel.get(id);
-        return {
-          id,
-          provider: m.providerID,
-          providerID: m.providerID,
-          model: m.id,
-          modelID: m.id,
-          name: m.name,
-          family: m.family ?? null,
-          context: m.limit?.context ?? null,
-          maxOutput: m.limit?.output ?? null,
-          tools: m.capabilities?.tools ?? null,
-          input: m.capabilities?.input ?? null,
-          output: m.capabilities?.output ?? null,
-          variants: (m.variants ?? []).map((v: any) => v.id),
-          status: m.status ?? null,
-          enabled: m.enabled !== false,
-          isDefault: defaultKey !== null && `${m.providerID}/${m.id}` === defaultKey,
-          scoreCount: st?.count ?? 0,
-          averageScore: st?.averageScore ?? null,
-          lastScore: st?.lastScore ?? null,
-          avgTaskMs: st?.avgDurationMs ?? null,
-          avgTaskTime: st?.avgDurationMs ?? null,
-          ...(args.detail === "full"
-            ? {
-                cost: m.cost ?? null,
-                capabilities: m.capabilities ?? null,
-                package: m.package ?? null,
-                released: m.time?.released ?? null,
-              }
-            : {}),
-        };
+        return enrichModelRow(m, doc, {
+          defaultKey,
+          stats: statsByModel.get(id),
+          detail: args.detail,
+        });
       });
+
+      if (args.provider && rows.length === 0 && doc) {
+        rows = catalogFallbackRows(String(args.provider), doc, {
+          defaultKey,
+          statsByModel,
+          detail: args.detail,
+        });
+      }
 
       if (args.provider) rows = rows.filter((r) => r.providerID === args.provider);
       if (needle)
@@ -400,7 +389,11 @@ server.registerTool(
           [r.id, r.name ?? "", r.family ?? ""].some((v) => String(v).toLowerCase().includes(needle)),
         );
       if (args.enabledOnly) rows = rows.filter((r) => r.enabled);
-      rows.sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.id.localeCompare(b.id));
+      rows.sort(
+        (a, b) =>
+          Number(b.isDefault) - Number(a.isDefault) ||
+          String(a.id).localeCompare(String(b.id)),
+      );
 
       const limit = args.limit ?? 50;
       const payload: Record<string, unknown> = {
@@ -408,6 +401,9 @@ server.registerTool(
         returned: Math.min(rows.length, limit),
         default: defaultKey,
         directory: oc.directory,
+        enterpriseConsole: enterpriseConsoleUrl(doc) ?? GO_CONSOLE_URL,
+        goPlanDocs: GO_DOCS_URL,
+        catalogLoaded: Boolean(doc),
         models: rows.slice(0, limit),
       };
       fitArray(payload, "models", "tail", 5);
@@ -442,7 +438,14 @@ server.registerTool(
           [p.id, p.label, p.baseUrl].some((v) => String(v).toLowerCase().includes(needle)),
         );
       }
-      return ok({ count: rows.length, providers: rows });
+      const doc = loadEnterpriseDoc();
+      return ok({
+        count: rows.length,
+        enterpriseConsole: enterpriseConsoleUrl(doc) ?? GO_CONSOLE_URL,
+        goPlanDocs: GO_DOCS_URL,
+        catalogLoaded: Boolean(doc),
+        providers: rows,
+      });
     } catch (err) {
       return fail(err);
     }

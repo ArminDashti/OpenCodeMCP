@@ -7,6 +7,8 @@
  * download it as SKILL.md.
  */
 
+import { GO_ORCHESTRATOR_MODELS, GO_SETUP_MARKDOWN } from "./go-plan.js";
+
 export const SKILL_NAME = "opencodemcp";
 export const SKILL_VERSION = "0.1.0";
 
@@ -103,11 +105,18 @@ Supported provider ids (use as \`provider\` in \`assign_task\` / \`models_list\`
 \`opencode-go\`, \`ollama\`, \`openai-compatible\`, \`xai\`, \`deepseek\`, \`groq\`,
 \`perplexity\`, \`cohere\`.
 
+${GO_SETUP_MARKDOWN}
+
+Recommended \`assign_task\` models (OpenCode Go):
+
+- Free: ${GO_ORCHESTRATOR_MODELS.free.join(", ")}
+- Paid: ${GO_ORCHESTRATOR_MODELS.paid.join(", ")}
+
 ## Notes
 
 - Everything lives under \`/api/*\` on the OpenCode server; auth is HTTP basic.
-- \`POST /api/session/{id}/prompt\` takes \`{"prompt": {"text": "…"}}\` (plus optional
-  \`delivery\`/\`metadata\`) and is asynchronous — a run is finished when the session
+- \`POST /api/session/{id}/prompt\` takes \`{"text": "…"}\` (plus optional
+  \`files\`, \`delivery\`, \`metadata\`) and is asynchronous — a run is finished when the session
   leaves \`GET /api/session/active\` and a \`time.completed\` reply exists at/after the
   prompt time (\`session.time.idle >= promptTime\` on older builds).
 - \`GET /api/permission/request\` is location-scoped: query it with the session's

@@ -48,7 +48,7 @@ via the `providers_list` MCP tool and the dashboard's Providers page):
 | `mistral` | Mistral AI | `https://api.mistral.ai/v1` | `MISTRAL_API_KEY` | `assets/providers/mistral.svg` |
 | `openrouter` | OpenRouter | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `assets/providers/openrouter.svg` |
 | `opencode` | OpenCode Zen | `https://opencode.ai/zen/v1` | `OPENCODE_API_KEY` | `assets/providers/opencode.svg` |
-| `opencode-go` | OpenCode Go | `https://opencode.ai/zen/go/v1` | `OPENCODE_API_KEY` | `assets/providers/opencode-go.svg` |
+| `opencode-go` | OpenCode Go | `https://opencode.ai/zen/go/v1` | `OPENCODE_GO_API_KEY` (`OPENCODE_API_KEY`) | `assets/providers/opencode-go.svg` |
 | `ollama` | Ollama (local) | `http://localhost:11434` | none (optional `OLLAMA_API_KEY`) | `assets/providers/ollama.svg` |
 | `openai-compatible` | OpenAI-Compatible (custom) | `{baseURL}` (e.g. `http://127.0.0.1:1234/v1`) | custom | `assets/providers/openai-compatible.svg` |
 | `xai` | xAI (Grok) | `https://api.x.ai/v1` | `XAI_API_KEY` | `assets/providers/xai.svg` |
@@ -59,15 +59,34 @@ via the `providers_list` MCP tool and the dashboard's Providers page):
 
 Key per-provider endpoints (chat / models / catalog) live in `src/providers.ts`
 and are served at runtime via `GET /api/providers` (dashboard Providers page)
-and the `providers_list` MCP tool. Endpoints + logo sources were verified
-2026-09-30 against each provider's official docs (docs URLs in the same file).
+and the `providers_list` MCP tool. OpenCode Go endpoints and setup were verified
+2026-10-04 against [OpenCode Go docs](https://opencode.ai/v2/docs/console/go)
+and `GET https://opencode.ai/zen/go/v1/models`. Other providers were verified
+2026-09-30 (docs URLs in the same file).
 All logos except `opencode-official-favicon.svg` are transparent-background SVGs.
+
+### OpenCode Go plan
+
+OpenCode Go is a **$10/mo (Go)** or **$40/mo (Go Plus)** subscription for curated open
+coding models. Setup:
+
+1. Subscribe at [OpenCode Console](https://opencode.ai/console) and copy your API key.
+2. In OpenCode: `/connect` → OpenCode Go → paste the key; `/models` to pick a model.
+3. From MCP, use `provider` `opencode-go` and a model slug (or `opencode-go/<slug>`),
+   e.g. `opencode-go/gpt-6-luna`, `opencode-go/space-bunny-free`.
+
+Direct HTTP (OpenAI-compatible): `https://opencode.ai/zen/go/v1` (`/chat/completions`,
+`/models`). Coding agents should send `x-opencode-session` per conversation and a
+client-specific `User-Agent` (see [Go docs](https://opencode.ai/v2/docs/console/go)).
+
+Optional bundled console catalog: place `src/data/enterprise-providers.json` and run
+`node scripts/generate-enterprise-providers.mjs` to refresh `models_list` metadata.
 
 ## Requirements
 
 - Node.js ≥ 18
-- OpenCode installed and authenticated (`opencode auth login`; the OpenCode Go plan works
-  with the `opencode-go/…` model ids)
+- OpenCode installed; for Go models subscribe at the Console and connect with `/connect`
+  (see [Go plan](https://opencode.ai/v2/docs/console/go); model ids `opencode-go/…`)
 
 ## Install
 
@@ -263,7 +282,7 @@ not provide — model catalogues, score-based agent ranking, and polling of deta
 - Auth is HTTP basic (`opencode:<password>`); the password is machine-stored and printed
   only the first time a `serve` process generates it.
 - `POST /api/session/{id}/prompt` is asynchronous — it returns an inbox item (`timeCreated`).
-  The body nests the text: `{"prompt": {"text": "…", "files": [...]}, "delivery": "steer"}`.
+  The body is flat: `{"text": "…", "files": [...], "delivery": "steer"}` (`text` required).
   A run is finished when the session drops out of `GET /api/session/active` and a reply
   stamped `time.completed` exists at/after the prompt time; builds that still expose
   `session.time.idle >= promptTime` are honoured unchanged.

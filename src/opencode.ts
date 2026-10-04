@@ -273,11 +273,10 @@ export class OpenCode {
       metadata?: Record<string, unknown>;
     },
   ): Promise<any> {
-    // OpenCode ≥1.18 nests the text under `prompt` (a PromptInput) and keeps
-    // `files` inside it; the envelope carries delivery/metadata.
-    const prompt: Record<string, unknown> = { text: body.text };
-    if (body.files?.length) prompt.files = body.files;
-    const payload: Record<string, unknown> = { prompt };
+    // Current OpenCode OpenAPI requires top-level `text` (and rejects a nested
+    // `prompt` object with additionalProperties: false).
+    const payload: Record<string, unknown> = { text: body.text };
+    if (body.files?.length) payload.files = body.files;
     if (body.delivery) payload.delivery = body.delivery;
     if (body.metadata) payload.metadata = body.metadata;
     const res = await this.request<any>(
