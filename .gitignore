@@ -7,3 +7,7 @@ dist/
 
 # auto-managed large files (>5MB)
 # commit-push-to-github: ignore files > 5MB
+
+# Auto-managed: files larger than 5 MB
+node_modules/typescript/lib/_tsc.js
+node_modules/typescript/lib/typescript.js
