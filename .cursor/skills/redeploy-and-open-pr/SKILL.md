@@ -3,10 +3,7 @@ name: redeploy-and-open-pr
 description: >-
   Use after ANY code change in a repo. If the app is Docker-based, rebuild,
   re-create and re-run it with docker compose so the latest changes are live
-  WITHOUT losing data (volumes and bind mounts preserved). If it is not
-  Docker-based, close every running instance of the app on the machine, build
-  and reinstall it, and run it again, keeping user data. Verify, then commit
-  on a feature branch and open a GitHub PR with gh.
+WITHOUT losing data (volumes and bind mounts preserved). If it is not Docker-based, close every running instance of the app on the machine, build and reinstall it, and run it again, keeping user data. Verify health, then commit on a feature branch and open a GitHub PR with gh.
 author: "Armin Dashti"
 uuid: 103e2b4b-ebe2-4d05-ac38-d92fada952ca
 ---
