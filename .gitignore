@@ -11,3 +11,21 @@ dist/
 # Auto-managed: files larger than 5 MB
 node_modules/typescript/lib/_tsc.js
 node_modules/typescript/lib/typescript.js
+
+# hygiene
+build/
+bin/
+obj/
+.venv/
+__pycache__/
+logs/
+.env
+.env.*
+*.tsbuildinfo
+.cache/
+coverage/
+*.zip
+*.7z
+graphify-out/
+.gitnexus/
+!.env.example

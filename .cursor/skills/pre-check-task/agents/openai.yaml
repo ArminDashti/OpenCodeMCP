@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pre-check Task"
+  short_description: "Rewrite, accept/reject, and investigate before editing code"
+  default_prompt: "Use $pre-check-task to pre-check this prompt and diagnose any failure before proposing edits."
