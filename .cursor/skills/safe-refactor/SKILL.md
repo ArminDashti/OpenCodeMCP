@@ -3,8 +3,11 @@ name: safe-refactor
 description: >-
   Restructure code while preserving behavior. Use for extraction, consolidation, ownership moves, or cleanup where verification must bracket structural edits.
 metadata:
+  version: 1.0.0
   author: "Armin Dashti"
-  uuid: 63469234-084e-4469-8165-656c7353a9b1
+  tags: []
+  last_updated: "2026-10-15 20:26:51"
+  uuid: 73b564e6-6d06-47c2-890b-6123bcd20231
 ---
 # Safe refactor
 
