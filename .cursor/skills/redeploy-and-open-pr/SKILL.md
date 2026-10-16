@@ -1,29 +1,6 @@
 ---
 name: redeploy-and-open-pr
 description: >-
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> 9c25c11 (chore: sync local changes 2026-10-15)
-  ALWAYS run this skill immediately after any code is modified, edited, fixed,
-  updated, refactored, or implemented in this repository — no exceptions, even
-  for "small" or "one-line" changes. Trigger whenever the user asks to change,
-  fix, add, update, or improve anything in the codebase, or whenever you
-  (the agent) have just finished writing or editing any file. If the app is
-  Docker-based: rebuild, re-create and re-run it with docker compose so the
-  latest changes are live WITHOUT losing data (volumes and bind mounts must be
-  preserved), then verify the service is healthy. Finally, commit the changes
-  on a feature branch  and open a GitHub PR using gh. Do not end your turn
-  after writing code — this skill is the mandatory final step of every
-  coding task.
-<<<<<<< HEAD
-=======
-=======
-  Use after ANY code change in a repo. If the app is Docker-based, rebuild,
-  re-create and re-run it with docker compose so the latest changes are live
-WITHOUT losing data (volumes and bind mounts preserved). If it is not Docker-based, close every running instance of the app on the machine, build and reinstall it, and run it again, keeping user data. Verify health, then commit on a feature branch and open a GitHub PR with gh.
->>>>>>> 519d50e (chore: sync local changes 2026-10-15)
->>>>>>> 9c25c11 (chore: sync local changes 2026-10-15)
 author: "Armin Dashti"
 uuid: 103e2b4b-ebe2-4d05-ac38-d92fada952ca
 ---

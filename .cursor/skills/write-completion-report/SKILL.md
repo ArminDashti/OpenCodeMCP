@@ -46,10 +46,8 @@ Append this report at the end of your response **ONLY** when the user's task is 
 | Category | Used |
 |----------|------|
 | 🤹 Skills | <skill_name1> / <skill_name2> / <skill_name3> |
-| 📜 Rules | <rule_name1> / <rule_name2> / <rule_name3> |
 | 🔌 MCPs | <mcp_name1> / <mcp_name2> / <mcp_name3> |
 | 🤖 Sub-agents | <agent_name1> / <agent_name2> / <agent_name3> |
-| 🪝 Hooks | <hook_name1> / <hook_name2> / <hook_name3> |
 
 ### 🧠 Learning
 | Concept | Description |

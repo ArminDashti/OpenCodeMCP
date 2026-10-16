@@ -2,14 +2,8 @@
 name: pre-check-task
 description: >-
   Pre-checks every human prompt before any other work: Phase 1 rewrites it into an expert agent-friendly prompt, Phase 2 accepts or rejects it with read-only checks, and Phase 3 investigates ambiguous failures before any edit. Use on every turn (including simple asks), and especially for bug reports, unknown causes, intermittent behavior, performance regressions, or investigations needing evidence-ranked hypotheses.
-disable-model-invocation: false
-metadata:
-  version: 2.0.0
-  author: "Armin Dashti"
-  category: governance
-  tags: [pre-checks, rewrite, prompt, accept, reject, feasibility, education, investigate, diagnosis]
-  last_updated: "2026-10-09 15:14:18"
-  uuid: 8f3c2a91-6b47-4e0d-9c1a-2d5e8f0a4b73
+author: "Armin Dashti"
+uuid: 8f3c2a91-6b47-4e0d-9c1a-2d5e8f0a4b73
 ---
 # Pre-check Task
 

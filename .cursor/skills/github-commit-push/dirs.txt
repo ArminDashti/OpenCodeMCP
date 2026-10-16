@@ -1,3 +1,0 @@
-# Scan roots for commit-push-to-github (one path per line)
-C:/Users/armin/GitHub
-C:/Users/armin/.cursor
