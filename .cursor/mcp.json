@@ -1,0 +1,22 @@
+{
+    "mcpServers":  {
+                       "codegraph":  {
+                                         "type":  "stdio",
+                                         "command":  "codegraph",
+                                         "args":  [
+                                                      "serve",
+                                                      "--mcp",
+                                                      "--path",
+                                                      "${workspaceFolder}"
+                                                  ]
+                                     },
+                       "skill-seekers":  {
+                                             "type":  "stdio",
+                                             "command":  "C:\\Users\\armin\\.skill-seekers-venv\\Scripts\\python.exe",
+                                             "args":  [
+                                                          "-m",
+                                                          "skill_seekers.mcp.server_fastmcp"
+                                                      ]
+                                         }
+                   }
+}
