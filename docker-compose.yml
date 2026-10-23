@@ -1,0 +1,23 @@
+# MCP uses stdio — Cursor spawns `docker compose run --rm -i mcp` (see README).
+# Build: docker compose build
+# Smoke:  docker compose run --rm -i mcp   (blocks on stdin; Ctrl+C to exit)
+
+services:
+  mcp:
+    build: .
+    image: opencode-mcp:local
+    stdin_open: true
+    tty: true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      OPENCODE_URL: ${OPENCODE_URL:-http://host.docker.internal:4096}
+      OPENCODE_PASSWORD: ${OPENCODE_PASSWORD:-}
+      OPENCODE_AUTOSTART: "0"
+      OPENCODE_DIRECTORY: ${OPENCODE_DIRECTORY:-/workspace}
+    volumes:
+      - ${WORKSPACE_HOST:-.}:/workspace
+      - opencode-mcp-data:/root/.opencode-mcp
+
+volumes:
+  opencode-mcp-data:
