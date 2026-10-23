@@ -9,8 +9,10 @@ export interface CliConfig {
   webuiPort: number;
 }
 
+/** OpenCode `serve` default; keep aligned with upstream unless the user sets `api port`. */
 export const DEFAULT_API_PORT = 4096;
-export const DEFAULT_WEBUI_PORT = 8090;
+/** High, uncommon port — avoids typical dev servers and many Windows excluded ranges (e.g. 8090). */
+export const DEFAULT_WEBUI_PORT = 28479;
 
 export function cliConfigPath(): string {
   return (
@@ -87,3 +89,4 @@ export function parsePortFlag(args: string[]): number | undefined {
   }
   return undefined;
 }
+

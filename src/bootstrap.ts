@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { execSync, spawn } from "node:child_process";
 
+import { DEFAULT_API_PORT } from "./cli-config.js";
 import type { Config } from "./config.js";
 
 /**
@@ -56,9 +57,9 @@ export function servePidFile(): string {
 function portFromBaseUrl(baseUrl: string): number {
   try {
     const port = Number(new URL(baseUrl).port);
-    return Number.isInteger(port) && port > 0 ? port : 4096;
+    return Number.isInteger(port) && port > 0 ? port : DEFAULT_API_PORT;
   } catch {
-    return 4096;
+    return DEFAULT_API_PORT;
   }
 }
 

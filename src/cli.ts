@@ -60,9 +60,9 @@ Examples:
   opencodemcp service start
   opencodemcp service status
   opencodemcp doctor
-  opencodemcp webui --port 8090
-  opencodemcp api port --port=4096
-  opencodemcp webui port --port=8090
+  opencodemcp webui --port ${DEFAULT_WEBUI_PORT}
+  opencodemcp api port --port=${DEFAULT_API_PORT}
+  opencodemcp webui port --port=${DEFAULT_WEBUI_PORT}
 `;
 }
 
@@ -134,7 +134,7 @@ function runServiceVerb(verb: "start" | "stop" | "restart"): void {
   if (runServiceCommand(verb)) return;
   // Builds without `opencode service`: manage a detached `opencode serve` instead.
   const cfg = loadConfig();
-  const port = Number(new URL(cfg.baseUrl).port) || 4096;
+  const port = Number(new URL(cfg.baseUrl).port) || DEFAULT_API_PORT;
   if (verb === "stop") {
     if (stopServeFallback()) {
       console.log(`stopped the detached opencode serve on port ${port}`);

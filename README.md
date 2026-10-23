@@ -117,7 +117,7 @@ opencodemcp help
 ```
 
 Ports persist in `~/.opencode-mcp/config.json` (defaults: api `4096`,
-webui `8090`). The MCP itself still prefers `OPENCODE_URL` when set, then
+webui `28479`). The MCP itself still prefers `OPENCODE_URL` when set, then
 the background service from `service.json`, then the stored api port.
 
 Running `opencodemcp webui` automatically opens your default browser at the
