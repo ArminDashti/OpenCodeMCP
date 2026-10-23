@@ -273,17 +273,42 @@ export class OpenCode {
       metadata?: Record<string, unknown>;
     },
   ): Promise<any> {
-    // Current OpenCode OpenAPI requires top-level `text` (and rejects a nested
-    // `prompt` object with additionalProperties: false).
-    const payload: Record<string, unknown> = { text: body.text };
-    if (body.files?.length) payload.files = body.files;
-    if (body.delivery) payload.delivery = body.delivery;
-    if (body.metadata) payload.metadata = body.metadata;
-    const res = await this.request<any>(
-      "POST",
-      `/api/session/${encodeURIComponent(sessionId)}/prompt`,
-      { body: payload },
-    );
+    // OpenCode >=1.18 nests text under `prompt`; some builds want top-level `text`.
+    const nestedInput: Record<string, unknown> = { text: body.text };
+    if (body.files?.length) nestedInput.files = body.files;
+    const envelope = (): Record<string, unknown> => {
+      const payload: Record<string, unknown> = { prompt: nestedInput };
+      if (body.delivery) payload.delivery = body.delivery;
+      if (body.metadata) payload.metadata = body.metadata;
+      return payload;
+    };
+    const flat = (): Record<string, unknown> => {
+      const payload: Record<string, unknown> = { text: body.text };
+      if (body.files?.length) payload.files = body.files;
+      if (body.delivery) payload.delivery = body.delivery;
+      if (body.metadata) payload.metadata = body.metadata;
+      return payload;
+    };
+
+    let res: any;
+    try {
+      res = await this.request<any>(
+        "POST",
+        `/api/session/${encodeURIComponent(sessionId)}/prompt`,
+        { body: envelope() },
+      );
+    } catch (err) {
+      const detail = `${err instanceof OpenCodeError ? err.detail ?? "" : ""}${err instanceof Error ? err.message : String(err)}`;
+      if (err instanceof OpenCodeError && err.status === 400 && /\[\"text\"\]|"text"/.test(detail)) {
+        res = await this.request<any>(
+          "POST",
+          `/api/session/${encodeURIComponent(sessionId)}/prompt`,
+          { body: flat() },
+        );
+      } else {
+        throw err;
+      }
+    }
     const data = res?.data ?? res;
     // Newer builds stamp the admission time as top-level `timeCreated`;
     // normalise it to `time.created` so callers can stay version-agnostic.

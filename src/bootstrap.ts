@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execSync, spawn } from "node:child_process";
+import { execFileSync, execSync, spawn } from "node:child_process";
 
 import { DEFAULT_API_PORT } from "./cli-config.js";
 import type { Config } from "./config.js";
@@ -39,15 +39,43 @@ export function readService(file = serviceFilePath()): ServiceCredential | null 
   }
 }
 
+/** Resolve the OpenCode CLI when `opencode` is not on PATH (common for Cursor/MCP). */
+export function resolveOpencodeExecutable(): string {
+  const fromEnv = process.env.OPENCODE_BIN?.trim();
+  if (fromEnv) return fromEnv;
+
+  if (process.platform === "win32") {
+    const npmGlobal = path.join(
+      os.homedir(),
+      "AppData",
+      "Roaming",
+      "npm",
+      "node_modules",
+      "opencode-ai",
+      "bin",
+      "opencode.exe",
+    );
+    if (fs.existsSync(npmGlobal)) return npmGlobal;
+  }
+
+  return "opencode";
+}
+
 /** Run `opencode service <verb>` (start/restart/stop). Returns true on success. */
 export function runServiceCommand(verb: "start" | "restart" | "stop"): boolean {
   try {
-    execSync(`opencode service ${verb}`, { stdio: "pipe", timeout: 90_000 });
+    execFileSync(resolveOpencodeExecutable(), ["service", verb], {
+      stdio: "pipe",
+      timeout: 90_000,
+      windowsHide: true,
+    });
     return true;
   } catch {
     return false;
   }
 }
+
+
 
 /** PID file for the `opencode serve` fallback (newer builds drop `opencode service`). */
 export function servePidFile(): string {
@@ -69,10 +97,9 @@ function portFromBaseUrl(baseUrl: string): number {
  */
 export function startServeFallback(port: number): boolean {
   try {
-    const child = spawn(`opencode serve --port ${port}`, {
+    const child = spawn(resolveOpencodeExecutable(), ["serve", "--port", String(port)], {
       detached: true,
       stdio: "ignore",
-      shell: true,
       windowsHide: true,
     });
     child.on("error", () => {
