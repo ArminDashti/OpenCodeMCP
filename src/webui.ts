@@ -743,6 +743,16 @@ export function startWebui(port: number): Promise<http.Server> {
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
       const p = url.pathname;
 
+      // default admin/admin for local dashboard; override before exposing beyond loopback
+      const user = process.env.WEBUI_USERNAME ?? "admin";
+      const pass = process.env.WEBUI_PASSWORD ?? "admin";
+      const expected = "Basic " + Buffer.from(`${user}:${pass}`).toString("base64");
+      if (req.headers.authorization !== expected) {
+        res.writeHead(401, { "WWW-Authenticate": 'Basic realm="opencode-mcp webui"', "Content-Type": "text/plain; charset=utf-8" });
+        res.end("401 Unauthorized");
+        return;
+      }
+
       if ((req.method === "GET" && p === "/") || p === "/index.html") {
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(PAGE);
