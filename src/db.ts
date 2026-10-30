@@ -52,6 +52,19 @@ export interface SettingRow {
   value: string;
 }
 
+export interface UserRow {
+  username: string;
+  email: string;
+  passwordHash: string;
+  updatedAt: number;
+}
+
+export interface AuthSessionRow {
+  token: string;
+  username: string;
+  expiresAt: number;
+}
+
 let db: DatabaseSync | null = null;
 
 export function dbPath(): string {
@@ -154,6 +167,22 @@ export function openDb(): DatabaseSync {
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+  `);
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      username     TEXT PRIMARY KEY,
+      email        TEXT NOT NULL,
+      passwordHash TEXT NOT NULL,
+      updatedAt    INTEGER NOT NULL
+    );
+  `);
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      token     TEXT PRIMARY KEY,
+      username  TEXT NOT NULL,
+      expiresAt INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expiresAt);
   `);
   migrateScores(database);
   db = database;
@@ -302,4 +331,48 @@ export function allSettings(): Record<string, string> {
   const out: Record<string, string> = {};
   for (const r of rows) out[r.key] = r.value;
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// users / auth sessions
+// ---------------------------------------------------------------------------
+
+export function userCount(): number {
+  const row = openDb().prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number };
+  return Number(row.n);
+}
+
+export function getUserByUsername(username: string): UserRow | null {
+  const row = openDb()
+    .prepare("SELECT username, email, passwordHash, updatedAt FROM users WHERE username = ?")
+    .get(username) as UserRow | undefined;
+  return row ?? null;
+}
+
+export function insertUser(username: string, email: string, passwordHash: string): UserRow {
+  const updatedAt = Date.now();
+  openDb()
+    .prepare(
+      `INSERT INTO users (username, email, passwordHash, updatedAt)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .run(username, email, passwordHash, updatedAt);
+  return { username, email, passwordHash, updatedAt };
+}
+
+export function createAuthSession(token: string, username: string, expiresAt: number): void {
+  openDb()
+    .prepare("INSERT INTO auth_sessions (token, username, expiresAt) VALUES (?, ?, ?)")
+    .run(token, username, expiresAt);
+}
+
+export function getAuthSession(token: string): AuthSessionRow | null {
+  const row = openDb()
+    .prepare("SELECT token, username, expiresAt FROM auth_sessions WHERE token = ?")
+    .get(token) as AuthSessionRow | undefined;
+  return row ?? null;
+}
+
+export function deleteAuthSession(token: string): void {
+  openDb().prepare("DELETE FROM auth_sessions WHERE token = ?").run(token);
 }

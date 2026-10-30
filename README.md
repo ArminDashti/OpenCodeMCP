@@ -194,7 +194,7 @@ from the background service's.
 | `OPENCODE_SERVER_PASSWORD` | — | Alias for `OPENCODE_PASSWORD`. |
 | `OPENCODE_USERNAME` | `opencode` | Basic-auth user. |
   | `OPENCODE_DIRECTORY` | `process.cwd()` | Project directory tasks run in. |
-  | `WEBUI_USERNAME` / `WEBUI_PASSWORD` | `admin` / `admin` | Dashboard (`webui`) basic-auth credentials. Override before exposing the dashboard beyond loopback. |
+  | `WEBUI_USERNAME` / `WEBUI_PASSWORD` / `WEBUI_EMAIL` | `admin` / `admin` / `admin@local` | Dashboard login (seeded on first run). Override before exposing the dashboard beyond loopback. |
 | `OPENCODE_AUTOSTART` | `1` | Allow starting/recovering the background service. Set `0` to disable. |
 | `OPENCODE_SERVICE_FILE` | `~/.config/opencode/service.json` | Alternate service credential file. |
 | `OPENCODE_SCORES_FILE` | `~/.opencode-mcp/scores.json` | Score store for `score_to_agent`. |

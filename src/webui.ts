@@ -9,7 +9,18 @@ import { OpenCode } from "./opencode.js";
 import { loadStore, aggregate, aggregateModels, recordScore, splitModelRef } from "./scores.js";
 import { PROVIDERS, providerInputFields } from "./providers.js";
 import { compactSession, renderTranscript, waitForIdle, countToolCalls, collectReply, deriveOutcome } from "./render.js";
-import { openDb, insertLog, listLogs, clearLogs, getSetting, setSetting, upsertApiKey, listApiKeys, deleteApiKey, getApiKey } from "./db.js";
+import { openDb, insertLog, listLogs, clearLogs, getSetting, setSetting, upsertApiKey, listApiKeys, deleteApiKey, getApiKey, getUserByUsername } from "./db.js";
+import {
+  clearSessionCookieHeader,
+  ensureDefaultUser,
+  login as authLogin,
+  logout as authLogout,
+  parseCookies,
+  publicAuthPaths,
+  readSessionUsername,
+  SESSION_COOKIE,
+  sessionCookieHeader,
+} from "./auth.js";
 import { SKILL_MARKDOWN, SKILL_NAME, SKILL_VERSION, skillFile } from "./skill.js";
 
 // ---------------------------------------------------------------------------
@@ -121,6 +132,60 @@ function saveSettings(patch: Partial<WebuiSettings>): WebuiSettings {
   setSetting("logsLevel", next.logsLevel);
   return next;
 }
+
+// ---------------------------------------------------------------------------
+// Login page
+// ---------------------------------------------------------------------------
+
+const LOGIN_PAGE = `<!doctype html>
+<html lang="en" data-theme="system"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Sign in • opencodemcp</title>
+<style>
+:root{--bg:#f8fafc;--panel:#fff;--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--accent:#2563eb;--bad:#b91c1c;--radius:14px}
+[data-theme="dark"]{--bg:#0b1220;--panel:#111c33;--ink:#e2e8f0;--muted:#94a3b8;--line:#243355;--accent:#60a5fa}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,"Segoe UI",Arial,sans-serif;background:var(--bg);color:var(--ink);padding:24px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:28px 26px;width:100%;max-width:400px;box-shadow:0 12px 40px rgba(15,23,42,.08)}
+h1{margin:0 0 6px;font-size:22px}
+.sub{margin:0 0 22px;color:var(--muted);font-size:13px}
+label{display:block;font-size:13px;color:var(--muted);margin:12px 0 6px}
+input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink);font-size:14px}
+button{width:100%;margin-top:18px;padding:11px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-weight:700;font-size:14px;cursor:pointer}
+button:hover{filter:brightness(.97)}
+.err{color:var(--bad);font-size:13px;margin-top:12px;min-height:18px}
+.brand{font-weight:800;font-size:12px;color:var(--muted);letter-spacing:.3px;text-transform:uppercase;margin-bottom:8px}
+</style></head><body>
+<div class="card">
+<div class="brand">opencodemcp</div>
+<h1>Sign in</h1>
+<p class="sub">Dashboard access for your OpenCode MCP orchestrator.</p>
+<form id="loginForm">
+<label for="username">Username</label>
+<input id="username" name="username" autocomplete="username" required autofocus/>
+<label for="password">Password</label>
+<input id="password" name="password" type="password" autocomplete="current-password" required/>
+<button type="submit">Sign in</button>
+<p class="err" id="err"></p>
+</form>
+</div>
+<script>
+const th=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
+document.documentElement.dataset.theme=th;
+function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}
+document.getElementById('loginForm').addEventListener('submit',async e=>{
+e.preventDefault();
+const err=document.getElementById('err');
+err.textContent='';
+const body={username:document.getElementById('username').value,password:document.getElementById('password').value};
+try{
+const r=await fetch('/api/auth/login',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+const d=await r.json().catch(()=>({}));
+if(r.ok&&d.ok){location.href='/';return}
+err.textContent=esc(d.error||'Sign in failed');
+}catch(x){err.textContent=esc(x)}
+});
+</script></body></html>`;
 
 // ---------------------------------------------------------------------------
 // Page (single-file SPA: Dashboard / Tasks / Providers / Skill / Stats / Logs / Playground / Settings)
@@ -341,11 +406,21 @@ pre{padding:12px;overflow:auto;font-size:12px;max-height:420px}
 <!-- SETTINGS -->
 <section class="page" id="page-settings">
 <div class="tabs" id="setTabs">
-<button data-tab="appearance" class="active">Appearance</button>
+<button data-tab="profile" class="active">Profile</button>
+<button data-tab="appearance">Appearance</button>
 <button data-tab="behaviour">Behaviour</button>
 <button data-tab="app">App</button>
 </div>
-<div id="setTabAppearance">
+<div id="setTabProfile">
+<div class="card"><h3>Profile</h3>
+<div class="form">
+<label>Username</label><input id="profUser" disabled/>
+<label>Email</label><input id="profEmail" disabled/>
+</div>
+<div class="toolbar"><button class="btn" id="profLogout">Log out</button><span class="hint" id="profMsg"></span></div>
+</div>
+</div>
+<div id="setTabAppearance" style="display:none">
 <div class="card"><h3>Appearance</h3>
 <div class="form">
 <label>Theme</label>
@@ -356,14 +431,14 @@ pre{padding:12px;overflow:auto;font-size:12px;max-height:420px}
 <select id="setLogsLevel"><option value="all">all</option><option value="info">info</option><option value="warn">warning</option><option value="error">errors</option></select>
 </div></div>
 </div>
-<div id="setTabBehaviour">
+<div id="setTabBehaviour" style="display:none">
 <div class="card"><h3>Behaviour</h3>
 <div class="form">
 <label>Auto-refresh (ms, 0=off)</label><input id="setRefresh" type="number" min="0" max="300000" step="1000"/>
 <label>Default sessions limit</label><input id="setLimit" type="number" min="1" max="200"/>
 </div></div>
 </div>
-<div id="setTabApp">
+<div id="setTabApp" style="display:none">
 <div class="card"><h3>App</h3>
 <div class="form">
 <label>API port</label><input id="setApiPort" type="number" min="1" max="65535"/>
@@ -383,7 +458,7 @@ pre{padding:12px;overflow:auto;font-size:12px;max-height:420px}
 const $=id=>document.getElementById(id);
 const state={page:'dashboard',settings:null,tasks:[],logLevel:'all',pgTool:'assign_task',setTab:'appearance',timer:null,provList:[],provKeys:{},provConfig:{}};
 function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
-async function j(u,o){const r=await fetch(u,o);const t=await r.text();try{return JSON.parse(t)}catch{return {raw:t,http:r.status}}}
+async function j(u,o){const r=await fetch(u,{credentials:'same-origin',...o});if(r.status===401&&String(u).startsWith('/api/')&&!String(u).startsWith('/api/auth/')){location.href='/login';return {error:'unauthorized'}};const t=await r.text();try{return JSON.parse(t)}catch{return {raw:t,http:r.status}}}
 function pad(n){return String(n).padStart(2,'0')}
 function fmtDT(ts){if(ts==null||ts==='')return '—';const d=new Date(Number(ts));if(isNaN(d.getTime()))return '—';return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+'-'+pad(d.getMinutes())+'-'+pad(d.getSeconds())}
 function fmtT(ts){return fmtDT(ts)}
@@ -504,13 +579,15 @@ $('pgHint').textContent='running…';$('pgOut').textContent='running '+state.pgT
 try{const d=await j('/api/playground/'+state.pgTool,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});$('pgOut').textContent=JSON.stringify(d,null,2).slice(0,20000);$('pgHint').textContent='done';clientLog(d&&d.error?'error':'info','playground '+state.pgTool+': '+(d.error||'ok'));if(state.pgTool==='score_to_agent'&&!d.error)loadTasks()}catch(e){$('pgOut').textContent='error: '+e;$('pgHint').textContent='failed';clientLog('error','playground '+state.pgTool+': '+e)}}
 $('pgRun').onclick=pgRun;
 // settings tabs
-$('setTabs').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;state.setTab=b.dataset.tab;document.querySelectorAll('#setTabs button').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('#setTabAppearance,#setTabBehaviour,#setTabApp').forEach(el=>el.style.display='none');$('setTab'+state.setTab.charAt(0).toUpperCase()+state.setTab.slice(1)).style.display='block'});
+function showSetTab(tab){state.setTab=tab;document.querySelectorAll('#setTabs button').forEach(x=>x.classList.toggle('active',x.dataset.tab===tab));['Profile','Appearance','Behaviour','App'].forEach(name=>{const el=$('setTab'+name);if(el)el.style.display=name.toLowerCase()===tab?'block':'none'})}
+$('setTabs').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;showSetTab(b.dataset.tab)});
 // settings
-async function loadSettingsUI(){try{const [s,st]=await Promise.all([j('/api/settings'),j('/api/status')]);state.settings=s.settings||s;$('setTheme').value=state.settings.theme;$('setDensity').value=state.settings.density;$('setLogsLevel').value=state.settings.logsLevel||'all';$('setRefresh').value=state.settings.refreshMs;$('setLimit').value=state.settings.sessionsLimit;$('setApiPort').value=(s.ports||st.ports||{}).api??st.ports?.api??'';$('setWebuiPort').value=(s.ports||st.ports||{}).webui??st.ports?.webui??'';$('setBaseUrl').value=st.baseUrl||'';$('setDir').value=st.directory||'';$('setDb').value=st.dbPath||'';state.logLevel=state.settings.logsLevel||'all';applyTheme();armTimer()}catch(e){$('setMsg').textContent='load failed: '+e}}
+async function loadSettingsUI(){try{const [s,st,me]=await Promise.all([j('/api/settings'),j('/api/status'),j('/api/auth/me')]);state.settings=s.settings||s;$('setTheme').value=state.settings.theme;$('setDensity').value=state.settings.density;$('setLogsLevel').value=state.settings.logsLevel||'all';$('setRefresh').value=state.settings.refreshMs;$('setLimit').value=state.settings.sessionsLimit;$('setApiPort').value=(s.ports||st.ports||{}).api??st.ports?.api??'';$('setWebuiPort').value=(s.ports||st.ports||{}).webui??st.ports?.webui??'';$('setBaseUrl').value=st.baseUrl||'';$('setDir').value=st.directory||'';$('setDb').value=st.dbPath||'';if(me.user){$('profUser').value=me.user.username||'';$('profEmail').value=me.user.email||'';$('sidefoot').textContent=(me.user.username||'?')+' • api '+(st.ports?.api??'?')+' • webui '+(st.ports?.webui??'?')}state.logLevel=state.settings.logsLevel||'all';applyTheme();armTimer()}catch(e){$('setMsg').textContent='load failed: '+e}}
+$('profLogout').onclick=async()=>{try{await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'});location.href='/login'}catch(e){$('profMsg').textContent='error: '+e}};
 $('setSave').onclick=async()=>{const body={theme:$('setTheme').value,density:$('setDensity').value,logsLevel:$('setLogsLevel').value,refreshMs:Number($('setRefresh').value),sessionsLimit:Number($('setLimit').value),apiPort:Number($('setApiPort').value)||undefined,webuiPort:Number($('setWebuiPort').value)||undefined};$('setMsg').textContent='saving…';try{const d=await j('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(d.error){$('setMsg').textContent='error: '+d.error}else{state.settings=d.settings;$('setMsg').textContent='saved ✓';applyTheme();armTimer();clientLog('info','settings saved')}}catch(e){$('setMsg').textContent='error: '+e}};
 $('themeBtn').onclick=()=>{const order=['light','dark','dark-plus','dracula','nord','solarized-light','solarized-dark','github-light','github-dark','monokai','tokyo-night'];const cur=document.documentElement.dataset.theme||'light';const next=order[(order.indexOf(cur)+1)%order.length];state.settings.theme=next;applyTheme();fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({theme:next})}).catch(()=>{});try{localStorage.setItem('ocmcp-theme',next)}catch{}};
 function armTimer(){if(state.timer)clearInterval(state.timer);const ms=state.settings?.refreshMs||0;if(ms>0)state.timer=setInterval(()=>{if(state.page==='dashboard')loadDashboard();if(state.page==='logs'&&$('logAuto').checked)loadLogs()},ms)}
-async function boot(){try{const s=await j('/api/settings');state.settings=s.settings||s;try{const lt=localStorage.getItem('ocmcp-theme');if(lt&&!s.settings)state.settings.theme=lt}catch{}}catch{state.settings={theme:'system',density:'comfortable',refreshMs:15000,sessionsLimit:20,logsLevel:'all'}}applyTheme();renderPgForm();load();loadSettingsUI();armTimer()}
+async function boot(){try{const s=await j('/api/settings');if(s.error==='unauthorized')return;state.settings=s.settings||s;try{const lt=localStorage.getItem('ocmcp-theme');if(lt&&!s.settings)state.settings.theme=lt}catch{}}catch{state.settings={theme:'system',density:'comfortable',refreshMs:15000,sessionsLimit:20,logsLevel:'all'}}applyTheme();showSetTab('profile');renderPgForm();load();loadSettingsUI();armTimer();j('/api/auth/me').then(me=>{if(me.user)$('sidefoot').textContent=(me.user.username||'?')+' • signed in'})}
 async function load(){if(state.page==='dashboard')loadDashboard();if(state.page==='tasks')loadTasks();if(state.page==='providers')loadProviders();if(state.page==='skill')loadSkill();if(state.page==='stats')loadStats();if(state.page==='logs')loadLogs();if(state.page==='settings')loadSettingsUI()}
 $('refreshBtn').onclick=load;$('taskReload').onclick=loadTasks;$('provReload').onclick=loadProviders;$('logReload').onclick=loadLogs;
 $('taskSearch').addEventListener('input',loadTasks);$('provSearch').addEventListener('input',loadProviders);$('logSearch').addEventListener('input',loadLogs);$('taskLimit').addEventListener('change',loadTasks);
@@ -556,8 +633,8 @@ const pad=n=>String(n).padStart(2,'0');
 function fmtDT(ts){if(ts==null||ts==='')return '—';const d=new Date(Number(ts));if(isNaN(d.getTime()))return '—';return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+'-'+pad(d.getMinutes())+'-'+pad(d.getSeconds())}
 function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 async function boot(){const q=new URLSearchParams(location.search);const sid=q.get('sessionID')||'';const ts=q.get('ts');if(!sid){document.getElementById('sub').textContent='missing sessionID';return}
-try{const s=await fetch('/api/settings').then(r=>r.json());const th=(s.settings||{}).theme||'system';const known=['light','dark','dark-plus','dracula','nord','solarized-light','solarized-dark','github-light','github-dark','monokai','tokyo-night'];document.documentElement.dataset.theme=th==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):(known.includes(th)?th:'light')}catch{}
-try{const u='/api/task?sessionID='+encodeURIComponent(sid)+(ts?'&ts='+encodeURIComponent(ts):'');const d=await fetch(u).then(r=>r.json());if(d.error){document.getElementById('sub').textContent='error: '+d.error;return}
+try{const s=await fetch('/api/settings',{credentials:'same-origin'}).then(r=>r.status===401?null:r.json());const th=(s?.settings||{}).theme||'system';const known=['light','dark','dark-plus','dracula','nord','solarized-light','solarized-dark','github-light','github-dark','monokai','tokyo-night'];document.documentElement.dataset.theme=th==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):(known.includes(th)?th:'light')}catch{}
+try{const u='/api/task?sessionID='+encodeURIComponent(sid)+(ts?'&ts='+encodeURIComponent(ts):'');const d=await fetch(u,{credentials:'same-origin'}).then(async r=>{if(r.status===401){location.href='/login';return {error:'unauthorized'}}return r.json()});if(d.error){document.getElementById('sub').textContent='error: '+d.error;return}
 document.getElementById('title').textContent='Task • '+(d.request?.orchester||'?');document.getElementById('sub').textContent=(sid||'')+' • '+fmtDT(d.request?.assignedAt);
 document.getElementById('req').innerHTML='<pre>'+esc(d.request?.task||'(empty)')+'</pre><p class="hint">orchester <b>'+esc(d.request?.orchester||'—')+'</b> • agent(provider) <b>'+esc(d.request?.provider||'—')+'</b> • model <b>'+esc(d.request?.model||'—')+'</b> • assigned <b>'+esc(fmtDT(d.request?.assignedAt))+'</b> • session <code>'+esc(sid)+'</code></p>';
 const r=d.response||{};const toks=r.tokens||{};const tot=((toks.input||0)+(toks.output||0)+(toks.reasoning||0));
@@ -737,19 +814,73 @@ async function taskDetailPayload(sessionID: string, ts?: number): Promise<Record
 
 /** Start the dashboard HTTP server. Resolves when listening; never resolves on close. */
 export function startWebui(port: number): Promise<http.Server> {
+  ensureDefaultUser();
   pushLog("info", `webui starting on port ${port}`, "boot");
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
       const p = url.pathname;
+      const sessionUser = readSessionUsername(req);
+      const authPublic =
+        publicAuthPaths().has(p) || (p === "/api/auth/logout" && req.method === "POST");
 
-      // default admin/admin for local dashboard; override before exposing beyond loopback
-      const user = process.env.WEBUI_USERNAME ?? "admin";
-      const pass = process.env.WEBUI_PASSWORD ?? "admin";
-      const expected = "Basic " + Buffer.from(`${user}:${pass}`).toString("base64");
-      if (req.headers.authorization !== expected) {
-        res.writeHead(401, { "WWW-Authenticate": 'Basic realm="opencode-mcp webui"', "Content-Type": "text/plain; charset=utf-8" });
-        res.end("401 Unauthorized");
+      if (sessionUser && req.method === "GET" && p === "/login") {
+        res.writeHead(302, { Location: "/" });
+        res.end();
+        return;
+      }
+      if (!sessionUser && !authPublic) {
+        if (p.startsWith("/api/")) {
+          json(res, 401, { error: "unauthorized", login: "/login" });
+          return;
+        }
+        res.writeHead(302, { Location: "/login" });
+        res.end();
+        return;
+      }
+
+      if (req.method === "GET" && p === "/login") {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(LOGIN_PAGE);
+        return;
+      }
+      if (p === "/api/auth/login" && req.method === "POST") {
+        const body = await readBody(req);
+        const result = authLogin(String(body.username ?? ""), String(body.password ?? ""));
+        if (!result) {
+          json(res, 401, { error: "Invalid username or password" });
+          return;
+        }
+        pushLog("info", `user ${result.username} signed in`, "auth");
+        res.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Set-Cookie": sessionCookieHeader(result.token),
+        });
+        res.end(JSON.stringify({ ok: true, user: { username: result.username, email: result.email } }));
+        return;
+      }
+      if (p === "/api/auth/logout" && req.method === "POST") {
+        const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+        authLogout(token);
+        res.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Set-Cookie": clearSessionCookieHeader(),
+        });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      if (p === "/api/auth/me" && req.method === "GET") {
+        const name = readSessionUsername(req);
+        if (!name) {
+          json(res, 401, { error: "unauthorized" });
+          return;
+        }
+        const profile = getUserByUsername(name);
+        if (!profile) {
+          json(res, 401, { error: "unauthorized" });
+          return;
+        }
+        json(res, 200, { user: { username: profile.username, email: profile.email } });
         return;
       }
 
@@ -896,18 +1027,7 @@ export function startWebui(port: number): Promise<http.Server> {
             return false;
           }
         });
-        // Friendly alias: the Anthropic mark is stored as claude.svg.
-        const fallback =
-          !hit && name.toLowerCase() === "anthropic.svg"
-            ? candidates.map((f) => f.replace("anthropic.svg", "claude.svg")).find((f) => {
-                try {
-                  return fs.statSync(f).isFile();
-                } catch {
-                  return false;
-                }
-              })
-            : undefined;
-        const file = hit ?? fallback;
+        const file = hit;
         if (!file) {
           json(res, 404, { error: `unknown provider logo ${name}` });
           return;
