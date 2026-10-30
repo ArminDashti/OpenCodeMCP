@@ -179,7 +179,7 @@ server.registerTool(
       provider: z
         .string()
         .optional()
-        .describe("Model provider, e.g. \"opencode-go\", \"openrouter\", \"ollama\". Pairs with model."),
+        .describe("Model provider, e.g. \"opencode-go\", \"opencode\", \"openrouter\". Pairs with model."),
       model: z
         .string()
         .optional()
@@ -351,7 +351,7 @@ server.registerTool(
       "from past runs — score count, average score and average time of doing a task. " +
       "Flags the current server default. Filter with provider or search.",
     inputSchema: {
-      provider: z.string().optional().describe("Only models of this provider, e.g. \"opencode-go\", \"opencode\", \"ollama\"."),
+      provider: z.string().optional().describe("Only models of this provider, e.g. \"opencode-go\", \"opencode\", \"openrouter\"."),
       search: z.string().optional().describe("Case-insensitive substring match against id, name or family."),
       enabledOnly: z.boolean().optional().describe("Hide models whose enabled flag is false (default false — show everything)."),
       detail: z.enum(["brief", "full"]).optional().describe("\"brief\" (default) = ids + limits + scores; \"full\" adds price, capabilities and package info."),
@@ -424,7 +424,7 @@ server.registerTool(
   {
     title: "List supported providers",
     description:
-      "Supported LLM providers with verified base URLs, key endpoints, the env var holding the API key, docs links and the transparent logo file. Use the provider id as the `provider` of assign_task (e.g. provider \"mistral\" with a Mistral model).",
+      "Supported LLM providers (OpenCode Go, OpenCode Zen, OpenRouter, OpenAI-Compatible) with verified base URLs, key endpoints, the env var holding the API key, docs links and the transparent logo file. Use the provider id as the `provider` of assign_task (e.g. provider \"openrouter\" with an OpenRouter model).",
     inputSchema: {
       search: z.string().optional().describe("Case-insensitive substring match against id, label or base URL."),
     },

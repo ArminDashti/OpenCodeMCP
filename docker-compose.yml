@@ -1,17 +1,45 @@
-# MCP uses stdio — Cursor spawns `docker compose run --rm -i mcp` (see README).
+# MCP uses stdio - Cursor spawns `docker compose run --rm -i mcp` (see README).
+# OpenCode server: docker compose up -d opencode   (always-on, 127.0.0.1:4096)
 # Build: docker compose build
 # Smoke:  docker compose run --rm -i mcp   (blocks on stdin; Ctrl+C to exit)
 
 services:
+  opencode:
+    image: ghcr.io/anomalyco/opencode:${OPENCODE_IMAGE_TAG:-1.19.5}
+    command: ["serve", "--hostname", "0.0.0.0", "--port", "4096"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4096:4096"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      OPENCODE_SERVER_PASSWORD: ${OPENCODE_PASSWORD:-}
+    working_dir: /workspace
+    volumes:
+      - ${WORKSPACE_HOST:-.}:/workspace
+      - opencode-config:/root/.config/opencode
+      - opencode-data:/root/.local/share/opencode
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null --header \"Authorization: Basic $$(printf 'opencode:%s' \"$$OPENCODE_SERVER_PASSWORD\" | base64 | tr -d '\\n')\" http://127.0.0.1:4096/config || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   mcp:
     build: .
     image: opencode-mcp:local
     stdin_open: true
     tty: true
+    depends_on:
+      opencode:
+        condition: service_started
+        required: false
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      OPENCODE_URL: ${OPENCODE_URL:-http://host.docker.internal:4096}
+      OPENCODE_URL: ${OPENCODE_URL:-http://opencode:4096}
       OPENCODE_PASSWORD: ${OPENCODE_PASSWORD:-}
       OPENCODE_AUTOSTART: "0"
       OPENCODE_DIRECTORY: ${OPENCODE_DIRECTORY:-/workspace}
@@ -21,3 +49,5 @@ services:
 
 volumes:
   opencode-mcp-data:
+  opencode-config:
+  opencode-data:
