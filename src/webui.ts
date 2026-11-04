@@ -88,7 +88,7 @@ export interface WebuiSettings {
 }
 
 const DEFAULT_SETTINGS: WebuiSettings = {
-  theme: "system",
+  theme: "dark-plus",
   density: "comfortable",
   refreshMs: 15000,
   sessionsLimit: 20,
@@ -134,30 +134,164 @@ function saveSettings(patch: Partial<WebuiSettings>): WebuiSettings {
 }
 
 // ---------------------------------------------------------------------------
+// Shared WebUI chrome (Yoda Admin–aligned tokens + Armin curations)
+// ---------------------------------------------------------------------------
+
+const WEBUI_FONTS =
+  '<link rel="preconnect" href="https://fonts.googleapis.com"/><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>' +
+  '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>';
+
+const WEBUI_SHARED_CSS = `
+:root{--bg:#f8fafc;--panel:#fff;--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--accent:#2563eb;--ok:#15803d;--warn:#b45309;--bad:#b42318;--chip:#f1f5f9;--radius:8px;--sidebar-w:240px;--switch-off:#39393d;--switch-on:#34c759}
+[data-theme="dark"]{--bg:#0b1220;--panel:#111c33;--ink:#e2e8f0;--muted:#94a3b8;--line:#243355;--accent:#2563eb;--chip:#1a2742}
+[data-theme="dark-plus"]{--bg:#1e1e1e;--panel:#252525;--ink:#e0e0e0;--muted:#9d9d9d;--line:#333333;--accent:#2563eb;--chip:#2d2d2d;color-scheme:dark}
+[data-theme="dracula"]{--bg:#282a36;--panel:#343746;--ink:#f8f8f2;--muted:#9a9cb3;--line:#44475a;--accent:#bd93f9;--chip:#44475a}
+[data-theme="nord"]{--bg:#2e3440;--panel:#3b4252;--ink:#eceff4;--muted:#9aa3b2;--line:#4c566a;--accent:#88c0d0;--chip:#434c5e}
+[data-theme="solarized-light"]{--bg:#fdf6e3;--panel:#eee8d5;--ink:#586e75;--muted:#839496;--line:#d3c69f;--accent:#268bd2;--chip:#e7dfc8}
+[data-theme="solarized-dark"]{--bg:#002b36;--panel:#073642;--ink:#eee8d5;--muted:#93a1a1;--line:#174652;--accent:#2aa198;--chip:#0e4a57}
+[data-theme="github-light"]{--bg:#ffffff;--panel:#f6f8fa;--ink:#1f2328;--muted:#59636e;--line:#d1d9e0;--accent:#0969da;--chip:#eaeef2}
+[data-theme="github-dark"]{--bg:#0d1117;--panel:#161b22;--ink:#e6edf3;--muted:#9198a1;--line:#30363d;--accent:#4493f8;--chip:#21262d}
+[data-theme="monokai"]{--bg:#272822;--panel:#3e3d32;--ink:#f8f8f2;--muted:#bebda8;--line:#49483e;--accent:#a6e22e;--chip:#49483e}
+[data-theme="tokyo-night"]{--bg:#1a1b26;--panel:#24283b;--ink:#c0caf5;--muted:#7f87a8;--line:#343b5c;--accent:#7aa2f7;--chip:#2b3049}
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,system-ui,"Segoe UI",Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.5}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+.app{display:grid;grid-template-columns:var(--sidebar-w) 1fr;min-height:100vh;transition:grid-template-columns .18s ease}
+.app.sidebar-collapsed{--sidebar-w:72px}
+aside{background:var(--panel);border-right:1px solid var(--line);padding:14px 10px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;overflow:hidden}
+.sidebar-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 6px 10px}
+.brand{font-weight:800;font-size:16px;letter-spacing:.2px;line-height:1.2}
+.brand small{display:block;font-weight:500;color:var(--muted);font-size:11px;margin-top:2px}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);cursor:pointer;flex-shrink:0}
+.icon-btn:hover{background:var(--chip)}
+.nav{display:flex;flex-direction:column;gap:2px;flex:1;min-height:0;overflow-y:auto}
+.nav button{display:flex;width:100%;text-align:left;gap:10px;align-items:center;padding:9px 10px;border:1px solid transparent;background:transparent;color:var(--muted);border-radius:8px;cursor:pointer;font-size:13px;font-weight:500}
+.nav button .ico{width:18px;height:18px;flex-shrink:0;opacity:.85}
+.nav button.active,.nav button:hover{color:var(--ink);background:var(--bg);font-weight:600}
+.nav button.active{border-color:var(--line)}
+.app.sidebar-collapsed .nav-label,.app.sidebar-collapsed .brand-text,.app.sidebar-collapsed .side-user-meta{display:none}
+.app.sidebar-collapsed .nav button{justify-content:center;padding:10px}
+.back-btn{display:flex;width:100%;text-align:left;gap:10px;align-items:center;padding:9px 10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;cursor:pointer;font-size:13px;margin-bottom:6px}
+.back-btn:hover{background:var(--bg)}
+.side-user{margin-top:auto;display:flex;align-items:center;gap:8px;padding:10px 8px;border-top:1px solid var(--line)}
+.side-user-main{display:flex;align-items:center;gap:10px;flex:1;min-width:0;cursor:pointer;border-radius:8px;padding:4px}
+.side-user-main:hover{background:var(--bg)}
+.avatar{width:32px;height:32px;border-radius:50%;background:var(--bg);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
+.side-user-meta{min-width:0;flex:1}
+.side-user-meta .name{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side-user-meta .sub{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.main-col{display:flex;flex-direction:column;min-height:100vh;min-width:0}
+main{padding:20px 24px 12px;flex:1;max-width:none;width:100%;min-width:0}
+.site-foot{padding:10px 24px 16px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.site-foot a{color:var(--accent);text-decoration:none}
+.site-foot a:hover{text-decoration:underline}
+.topbar{display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap}
+.topbar h2{margin:0;font-size:20px;font-weight:700}
+.dot{width:9px;height:9px;border-radius:50%;background:#999;display:inline-block}
+.dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}
+.spacer{flex:1}
+input,select,textarea{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit}
+input:focus,select:focus,textarea:focus{outline:2px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:1px}
+button.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;font-size:13px;font-weight:500;font-family:inherit}
+button.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button.btn:hover{filter:brightness(.97)}
+button.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:12px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px}
+.card h4{margin:0 0 6px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+.card .v{font-size:22px;font-weight:800}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:900px){.app{grid-template-columns:1fr}.app.sidebar-collapsed{--sidebar-w:1fr}aside{position:static;height:auto;max-height:none}.grid2{grid-template-columns:1fr}main{padding:14px}}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;background:var(--bg);font-weight:600}
+tr:hover td{background:color-mix(in srgb,var(--ink) 4%,transparent);cursor:pointer}
+body[data-density="compact"] th,body[data-density="compact"] td{padding:4px 8px;font-size:12px}
+code,pre{background:var(--chip);padding:2px 6px;border-radius:6px;font-family:ui-monospace,Consolas,monospace}
+pre{padding:12px;overflow:auto;font-size:12px;max-height:420px}
+.badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:700;background:var(--chip)}
+.badge.hi{background:#dcfce7;color:#166534}[data-theme="dark-plus"] .badge.hi,[data-theme="dark"] .badge.hi{background:#14532d;color:#bbf7d0}
+.badge.mid{background:#fef9c3;color:#854d0e}[data-theme="dark-plus"] .badge.mid,[data-theme="dark"] .badge.mid{background:#713f12;color:#fef9c3}
+.badge.lo{background:#fee2e2;color:#991b1b}[data-theme="dark-plus"] .badge.lo,[data-theme="dark"] .badge.lo{background:#7f1d1d;color:#fecaca}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
+.page{display:none;animation:hx-rise .22s ease}.page.active{display:block}
+@keyframes hx-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.logrow{display:grid;grid-template-columns:170px 70px 150px 1fr;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line);font-size:12.5px;align-items:baseline}
+.logrow .lv{font-weight:800}.lv.info{color:var(--accent)}.lv.warn{color:var(--warn)}.lv.error{color:var(--bad)}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg button{padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;font-size:12px}
+.seg button.active{background:var(--ink);color:var(--bg);font-weight:700}
+.set-shell{display:grid;grid-template-columns:180px 1fr;gap:20px;align-items:start}
+@media(max-width:760px){.set-shell{grid-template-columns:1fr}}
+.set-nav{display:flex;flex-direction:column;gap:4px}
+.set-nav button{text-align:left;padding:8px 12px;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--muted);cursor:pointer;font-size:13px}
+.set-nav button.active,.set-nav button:hover{color:var(--ink);background:var(--bg);border-color:var(--line);font-weight:600}
+.settings-panel{max-width:48rem;width:100%}
+.settings-panel h1{margin:0 0 6px;font-size:22px;font-weight:700}
+.settings-lead{margin:0 0 18px;color:var(--muted);font-size:13px}
+.settings-section{margin:0 0 20px}
+.settings-section h2{margin:0 0 8px;font-size:13px;font-weight:600}
+.settings-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.settings-row{display:grid;grid-template-columns:1fr auto;gap:4px 16px;padding:14px 16px;border-bottom:1px solid var(--line);align-items:center}
+.settings-row:last-child{border-bottom:none}
+.settings-row__title{margin:0;font-size:13px;font-weight:500}
+.settings-row__desc{margin:0;font-size:12px;color:var(--muted);grid-column:1}
+.settings-row__control{grid-column:2;grid-row:1/span 2;justify-self:end}
+.settings-row.stacked{grid-template-columns:1fr}
+.settings-row.stacked .settings-row__control{grid-column:1;grid-row:auto;justify-self:stretch;width:100%}
+.settings-footer{display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--line)}
+input.sw{appearance:none;width:44px;height:26px;border-radius:999px;background:var(--switch-off);position:relative;cursor:pointer;border:none;flex-shrink:0}
+input.sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .15s ease}
+input.sw:checked{background:var(--switch-on)}
+input.sw:checked::after{transform:translateX(18px)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+.tabs button{padding:7px 13px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;font-size:13px}
+.tabs button.active{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
+.form{display:grid;grid-template-columns:180px 1fr;gap:8px 12px;align-items:center;margin:10px 0}
+.form label{color:var(--muted);font-size:13px}
+.hint{color:var(--muted);font-size:12px}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:20px;opacity:0;visibility:hidden;transition:opacity .2s ease,visibility .2s ease;z-index:50}
+.modal.open{opacity:1;visibility:visible}
+.modal .box{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);max-width:760px;width:100%;padding:18px;max-height:86vh;overflow:auto;transform:translateY(6px) scale(.985);transition:transform .2s ease}
+.modal.open .box{transform:none}
+.kv{display:grid;grid-template-columns:170px 1fr;gap:6px 10px;font-size:13px;margin:8px 0}
+.kv dt{color:var(--muted)}.kv dd{margin:0}
+.prov-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px;display:flex;flex-direction:column;gap:8px}
+.prov-card .logo-row{display:flex;align-items:center;gap:10px}
+.prov-card .logo-row img{width:28px;height:28px}
+.prov-card h4{margin:0;font-size:15px}
+.prov-card .actions{display:flex;gap:6px;margin-top:4px}
+.key-input{width:100%;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+.field-tag{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:2px 7px;border-radius:999px;margin-left:6px}
+.field-tag.req{background:#fee2e2;color:#991b1b}[data-theme="dark-plus"] .field-tag.req{background:#3b1d1b;color:#fecaca}
+.field-tag.opt{background:var(--chip);color:var(--muted)}
+.prov-detail-head{display:flex;align-items:flex-start;gap:14px;margin-bottom:12px}
+.prov-detail-head img{width:36px;height:36px}
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.login-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:28px 26px;width:100%;max-width:400px}
+.login-card h1{margin:0 0 6px;font-size:22px}
+.login-card .sub{margin:0 0 22px;color:var(--muted);font-size:13px}
+.login-card label{display:block;font-size:13px;color:var(--muted);margin:12px 0 6px}
+.login-card input{width:100%;padding:10px 12px}
+.login-card button.btn.primary{width:100%;margin-top:18px;justify-content:center;padding:11px}
+.login-card .err{color:var(--bad);font-size:13px;margin-top:12px;min-height:18px}
+.login-brand{font-weight:800;font-size:12px;color:var(--muted);letter-spacing:.3px;text-transform:uppercase;margin-bottom:8px}
+`;
+
+// ---------------------------------------------------------------------------
 // Login page
 // ---------------------------------------------------------------------------
 
 const LOGIN_PAGE = `<!doctype html>
-<html lang="en" data-theme="system"><head><meta charset="utf-8"/>
+<html lang="en" data-theme="dark-plus"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="theme-color" content="#252525"/>
 <title>Sign in • opencodemcp</title>
-<style>
-:root{--bg:#f8fafc;--panel:#fff;--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--accent:#2563eb;--bad:#b91c1c;--radius:14px}
-[data-theme="dark"]{--bg:#0b1220;--panel:#111c33;--ink:#e2e8f0;--muted:#94a3b8;--line:#243355;--accent:#60a5fa}
-*{box-sizing:border-box}
-body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,"Segoe UI",Arial,sans-serif;background:var(--bg);color:var(--ink);padding:24px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:28px 26px;width:100%;max-width:400px;box-shadow:0 12px 40px rgba(15,23,42,.08)}
-h1{margin:0 0 6px;font-size:22px}
-.sub{margin:0 0 22px;color:var(--muted);font-size:13px}
-label{display:block;font-size:13px;color:var(--muted);margin:12px 0 6px}
-input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink);font-size:14px}
-button{width:100%;margin-top:18px;padding:11px;border:none;border-radius:10px;background:var(--accent);color:#fff;font-weight:700;font-size:14px;cursor:pointer}
-button:hover{filter:brightness(.97)}
-.err{color:var(--bad);font-size:13px;margin-top:12px;min-height:18px}
-.brand{font-weight:800;font-size:12px;color:var(--muted);letter-spacing:.3px;text-transform:uppercase;margin-bottom:8px}
-</style></head><body>
-<div class="card">
-<div class="brand">opencodemcp</div>
+${WEBUI_FONTS}
+<style>${WEBUI_SHARED_CSS}</style></head><body>
+<div class="login-wrap">
+<div class="login-card">
+<div class="login-brand">opencodemcp</div>
 <h1>Sign in</h1>
 <p class="sub">Dashboard access for your OpenCode MCP orchestrator.</p>
 <form id="loginForm">
@@ -165,13 +299,13 @@ button:hover{filter:brightness(.97)}
 <input id="username" name="username" autocomplete="username" required autofocus/>
 <label for="password">Password</label>
 <input id="password" name="password" type="password" autocomplete="current-password" required/>
-<button type="submit">Sign in</button>
+<button type="submit" class="btn primary">Sign in</button>
 <p class="err" id="err"></p>
 </form>
 </div>
+</div>
 <script>
-const th=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
-document.documentElement.dataset.theme=th;
+document.documentElement.dataset.theme='dark-plus';
 function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}
 document.getElementById('loginForm').addEventListener('submit',async e=>{
 e.preventDefault();
@@ -192,114 +326,45 @@ err.textContent=esc(d.error||'Sign in failed');
 // ---------------------------------------------------------------------------
 
 const PAGE = `<!doctype html>
-<html lang="en" data-theme="system"><head><meta charset="utf-8"/>
+<html lang="en" data-theme="dark-plus"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="theme-color" content="#252525"/>
 <title>opencodemcp dashboard</title>
-<style>
-:root{--bg:#f8fafc;--panel:#fff;--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--accent:#2563eb;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;--chip:#f1f5f9;--radius:12px}
-[data-theme="dark"]{--bg:#0b1220;--panel:#111c33;--ink:#e2e8f0;--muted:#94a3b8;--line:#243355;--accent:#60a5fa;--chip:#1a2742}
-[data-theme="dark-plus"]{--bg:#1e1e1e;--panel:#252526;--ink:#d4d4d4;--muted:#9d9d9d;--line:#3e3e42;--accent:#007acc;--chip:#2d2d30}
-[data-theme="dracula"]{--bg:#282a36;--panel:#343746;--ink:#f8f8f2;--muted:#9a9cb3;--line:#44475a;--accent:#bd93f9;--chip:#44475a}
-[data-theme="nord"]{--bg:#2e3440;--panel:#3b4252;--ink:#eceff4;--muted:#9aa3b2;--line:#4c566a;--accent:#88c0d0;--chip:#434c5e}
-[data-theme="solarized-light"]{--bg:#fdf6e3;--panel:#eee8d5;--ink:#586e75;--muted:#839496;--line:#d3c69f;--accent:#268bd2;--chip:#e7dfc8}
-[data-theme="solarized-dark"]{--bg:#002b36;--panel:#073642;--ink:#eee8d5;--muted:#93a1a1;--line:#174652;--accent:#2aa198;--chip:#0e4a57}
-[data-theme="github-light"]{--bg:#ffffff;--panel:#f6f8fa;--ink:#1f2328;--muted:#59636e;--line:#d1d9e0;--accent:#0969da;--chip:#eaeef2}
-[data-theme="github-dark"]{--bg:#0d1117;--panel:#161b22;--ink:#e6edf3;--muted:#9198a1;--line:#30363d;--accent:#4493f8;--chip:#21262d}
-[data-theme="monokai"]{--bg:#272822;--panel:#3e3d32;--ink:#f8f8f2;--muted:#bebda8;--line:#49483e;--accent:#a6e22e;--chip:#49483e}
-[data-theme="tokyo-night"]{--bg:#1a1b26;--panel:#24283b;--ink:#c0caf5;--muted:#7f87a8;--line:#343b5c;--accent:#7aa2f7;--chip:#2b3049}
-*{box-sizing:border-box}
-body{margin:0;font-family:system-ui,"Segoe UI",Arial,sans-serif;background:var(--bg);color:var(--ink)}
-.app{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
-aside{background:var(--panel);border-right:1px solid var(--line);padding:18px 14px;display:flex;flex-direction:column;gap:6px;position:sticky;top:0;height:100vh}
-.brand{font-weight:800;font-size:17px;letter-spacing:.2px;margin:2px 6px 12px}
-.brand small{display:block;font-weight:500;color:var(--muted);font-size:11px}
-.nav button{display:flex;width:100%;text-align:left;gap:10px;align-items:center;padding:10px 12px;border:1px solid transparent;background:transparent;color:var(--ink);border-radius:10px;cursor:pointer;font-size:14px}
-.nav button.active{background:var(--chip);border-color:var(--line);font-weight:700}
-.nav button:hover{background:var(--chip)}
-.back-btn{display:flex;width:100%;text-align:left;gap:10px;align-items:center;padding:10px 12px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;cursor:pointer;font-size:14px;margin-bottom:8px}
-.back-btn:hover{background:var(--chip)}
-.side-foot{margin-top:auto;color:var(--muted);font-size:12px;padding:8px 6px}
-main{padding:22px 26px;max-width:none;width:100%;min-width:0}
-.topbar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
-.topbar h2{margin:0;font-size:22px}
-.dot{width:9px;height:9px;border-radius:50%;background:#999;display:inline-block}
-.dot.ok{background:#22c55e}.dot.bad{background:#ef4444}
-.spacer{flex:1}
-input,select,textarea{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px}
-button.btn{padding:8px 14px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;font-size:13px}
-button.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
-button.btn:hover{filter:brightness(.97)}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:12px 0}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px}
-.card h4{margin:0 0 6px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
-.card .v{font-size:22px;font-weight:800}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-@media(max-width:900px){.app{grid-template-columns:1fr}aside{position:static;height:auto;flex-direction:row;flex-wrap:wrap}.grid2{grid-template-columns:1fr}main{padding:14px}}
-table{border-collapse:collapse;width:100%;font-size:13px}
-th,td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
-th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
-tr:hover td{background:rgba(127,127,127,.06);cursor:pointer}
-body[data-density="compact"] th,body[data-density="compact"] td{padding:4px 8px;font-size:12px}
-code,pre{background:var(--chip);padding:2px 6px;border-radius:6px}
-pre{padding:12px;overflow:auto;font-size:12px;max-height:420px}
-.badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:700;background:var(--chip)}
-.badge.hi{background:#dcfce7;color:#166534}[data-theme="dark"] .badge.hi{background:#14532d;color:#bbf7d0}
-.badge.mid{background:#fef9c3;color:#854d0e}[data-theme="dark"] .badge.mid{background:#713f12;color:#fef9c3}
-.badge.lo{background:#fee2e2;color:#991b1b}[data-theme="dark"] .badge.lo{background:#7f1d1d;color:#fecaca}
-.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
-.page{display:none}.page.active{display:block}
-.logrow{display:grid;grid-template-columns:170px 70px 150px 1fr;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line);font-size:12.5px;align-items:baseline}
-.logrow .lv{font-weight:800}.lv.info{color:var(--accent)}.lv.warn{color:var(--warn)}.lv.error{color:var(--bad)}
-.seg{display:flex;gap:6px;flex-wrap:wrap}
-.seg button{padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;font-size:12px}
-.seg button.active{background:var(--ink);color:var(--bg);font-weight:700}
-.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
-.tabs button{padding:7px 13px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;font-size:13px}
-.tabs button.active{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700}
-.form{display:grid;grid-template-columns:180px 1fr;gap:8px 12px;align-items:center;margin:10px 0}
-.form label{color:var(--muted);font-size:13px}
-.hint{color:var(--muted);font-size:12px}
-.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;padding:20px}
-.modal.open{display:flex}
-.modal .box{background:var(--panel);border:1px solid var(--line);border-radius:14px;max-width:760px;width:100%;padding:18px;max-height:86vh;overflow:auto}
-.kv{display:grid;grid-template-columns:170px 1fr;gap:6px 10px;font-size:13px;margin:8px 0}
-.kv dt{color:var(--muted)}.kv dd{margin:0}
-.prov-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px;display:flex;flex-direction:column;gap:8px}
-.prov-card .logo-row{display:flex;align-items:center;gap:10px}
-.prov-card .logo-row img{width:28px;height:28px}
-.prov-card h4{margin:0;font-size:15px}
-.prov-card .actions{display:flex;gap:6px;margin-top:4px}
-.key-input{width:100%;font-family:monospace;font-size:12px}
-.field-tag{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;padding:2px 7px;border-radius:999px;margin-left:6px}
-.field-tag.req{background:#fee2e2;color:#991b1b}[data-theme="dark"] .field-tag.req{background:#7f1d1d;color:#fecaca}
-.field-tag.opt{background:var(--chip);color:var(--muted)}
-.prov-detail-head{display:flex;align-items:flex-start;gap:14px;margin-bottom:12px}
-.prov-detail-head img{width:36px;height:36px}
-</style></head><body data-density="comfortable">
-<div class="app">
+${WEBUI_FONTS}
+<style>${WEBUI_SHARED_CSS}</style></head><body data-density="comfortable">
+<div class="app" id="appShell">
 <aside>
-<div class="brand">opencodemcp<small>orchestrator dashboard</small></div>
+<div class="sidebar-head">
+<div class="brand"><span class="brand-text">opencodemcp</span><small class="brand-text">orchestrator dashboard</small></div>
+<button type="button" class="icon-btn" id="sidebarToggle" title="Collapse sidebar" aria-label="Collapse sidebar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></button>
+</div>
 <button class="back-btn" id="backBtn" style="display:none">← Back</button>
 <nav class="nav" id="nav">
-<button data-page="dashboard" class="active">📊 Dashboard</button>
-<button data-page="tasks">🗂 Tasks</button>
-<button data-page="providers">🔌 Providers</button>
-<button data-page="skill">📜 Skill</button>
-<button data-page="stats">📈 Stats</button>
-<button data-page="logs">🧾 Logs</button>
-<button data-page="playground">🧪 Playground</button>
-<button data-page="settings">⚙ Settings</button>
+<button data-page="dashboard" data-label="Dashboard" class="active"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg><span class="nav-label">Dashboard</span></button>
+<button data-page="tasks" data-label="Tasks"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg><span class="nav-label">Tasks</span></button>
+<button data-page="providers" data-label="Providers"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg><span class="nav-label">Providers</span></button>
+<button data-page="skill" data-label="Skill"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg><span class="nav-label">Skill</span></button>
+<button data-page="stats" data-label="Stats"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 16l4-8 4 5 5-9"/></svg><span class="nav-label">Stats</span></button>
+<button data-page="logs" data-label="Logs"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg><span class="nav-label">Logs</span></button>
+<button data-page="playground" data-label="Playground"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 3l10 9-10 9V3z"/></svg><span class="nav-label">Playground</span></button>
 </nav>
-<div class="side-foot" id="sidefoot">…</div>
+<div class="side-user">
+<div class="side-user-main" id="sideProfile" title="Profile">
+<div class="avatar" id="sideAvatar">?</div>
+<div class="side-user-meta"><div class="name" id="sideName">Signed in</div><div class="sub" id="sideSub">…</div></div>
+</div>
+<button type="button" class="icon-btn" id="sideSettings" title="Settings" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg></button>
+</div>
 </aside>
+<div class="main-col">
 <main>
 <div class="topbar">
 <h2 id="title">Dashboard</h2>
 <span class="dot" id="healthDot" title="server reachability"></span>
 <span class="hint" id="healthTxt">checking…</span>
 <span class="spacer"></span>
-<button class="btn" id="themeBtn" title="toggle light/dark">◐ theme</button>
-<button class="btn" id="refreshBtn">↻ Refresh</button>
+<button class="btn" id="themeBtn" title="Cycle theme"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2"/></svg> Theme</button>
+<button class="btn" id="refreshBtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.13-3.36L23 10M1 14l5.36 4.36A9 9 0 0020.49 15"/></svg> Refresh</button>
 </div>
 
 <!-- DASHBOARD -->
@@ -405,54 +470,73 @@ pre{padding:12px;overflow:auto;font-size:12px;max-height:420px}
 
 <!-- SETTINGS -->
 <section class="page" id="page-settings">
-<div class="tabs" id="setTabs">
-<button data-tab="profile" class="active">Profile</button>
-<button data-tab="appearance">Appearance</button>
-<button data-tab="behaviour">Behaviour</button>
-<button data-tab="app">App</button>
-</div>
+<div class="set-shell">
+<nav class="set-nav" id="setTabs" aria-label="Settings categories">
+<button type="button" data-tab="profile" class="active">Profile</button>
+<button type="button" data-tab="appearance">Appearance</button>
+<button type="button" data-tab="behaviour">Behaviour</button>
+<button type="button" data-tab="feedback">Feedback</button>
+<button type="button" data-tab="about">About</button>
+<button type="button" data-tab="app">App</button>
+</nav>
+<div class="settings-panel">
+<h1>Settings</h1>
+<p class="settings-lead">Preferences for this dashboard, orchestrator ports, and appearance.</p>
 <div id="setTabProfile">
-<div class="card"><h3>Profile</h3>
-<div class="form">
-<label>Username</label><input id="profUser" disabled/>
-<label>Email</label><input id="profEmail" disabled/>
-</div>
-<div class="toolbar"><button class="btn" id="profLogout">Log out</button><span class="hint" id="profMsg"></span></div>
-</div>
+<div class="settings-section"><h2>Account</h2>
+<div class="settings-card">
+<div class="settings-row stacked"><p class="settings-row__title">Username</p><p class="settings-row__desc">Signed-in dashboard user.</p><div class="settings-row__control"><input id="profUser" disabled style="width:100%"/></div></div>
+<div class="settings-row stacked"><p class="settings-row__title">Email</p><p class="settings-row__desc">Contact email on file.</p><div class="settings-row__control"><input id="profEmail" disabled style="width:100%"/></div></div>
+<div class="settings-footer"><button class="btn" id="profLogout">Log out</button><span class="hint" id="profMsg"></span></div>
+</div></div>
 </div>
 <div id="setTabAppearance" style="display:none">
-<div class="card"><h3>Appearance</h3>
-<div class="form">
-<label>Theme</label>
-<select id="setTheme"><option value="system">system (auto)</option><option value="light">Light</option><option value="dark">Dark</option><option value="dark-plus">Dark+ (VS Code)</option><option value="dracula">Dracula</option><option value="nord">Nord</option><option value="solarized-light">Solarized Light</option><option value="solarized-dark">Solarized Dark</option><option value="github-light">GitHub Light</option><option value="github-dark">GitHub Dark</option><option value="monokai">Monokai</option><option value="tokyo-night">Tokyo Night</option></select>
-<label>Density</label>
-<select id="setDensity"><option value="comfortable">comfortable</option><option value="compact">compact</option></select>
-<label>Log level (default filter)</label>
-<select id="setLogsLevel"><option value="all">all</option><option value="info">info</option><option value="warn">warning</option><option value="error">errors</option></select>
+<div class="settings-section"><h2>Appearance</h2>
+<div class="settings-card">
+<div class="settings-row"><p class="settings-row__title">Theme</p><p class="settings-row__desc">Editor-style palette for the dashboard.</p><div class="settings-row__control"><select id="setTheme"><option value="system">system (auto)</option><option value="light">Light</option><option value="dark">Dark</option><option value="dark-plus">Dark+ (VS Code)</option><option value="dracula">Dracula</option><option value="nord">Nord</option><option value="solarized-light">Solarized Light</option><option value="solarized-dark">Solarized Dark</option><option value="github-light">GitHub Light</option><option value="github-dark">GitHub Dark</option><option value="monokai">Monokai</option><option value="tokyo-night">Tokyo Night</option></select></div></div>
+<div class="settings-row"><p class="settings-row__title">Density</p><p class="settings-row__desc">Table row spacing across the app.</p><div class="settings-row__control"><select id="setDensity"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></div></div>
+<div class="settings-row"><p class="settings-row__title">Default log filter</p><p class="settings-row__desc">Initial severity on the Logs page.</p><div class="settings-row__control"><select id="setLogsLevel"><option value="all">All</option><option value="info">Info</option><option value="warn">Warning</option><option value="error">Errors</option></select></div></div>
 </div></div>
 </div>
 <div id="setTabBehaviour" style="display:none">
-<div class="card"><h3>Behaviour</h3>
-<div class="form">
-<label>Auto-refresh (ms, 0=off)</label><input id="setRefresh" type="number" min="0" max="300000" step="1000"/>
-<label>Default sessions limit</label><input id="setLimit" type="number" min="1" max="200"/>
+<div class="settings-section"><h2>Behaviour</h2>
+<div class="settings-card">
+<div class="settings-row stacked"><p class="settings-row__title">Auto-refresh interval</p><p class="settings-row__desc">Milliseconds between dashboard/log polls (0 disables).</p><div class="settings-row__control"><input id="setRefresh" type="number" min="0" max="300000" step="1000" style="width:100%"/></div></div>
+<div class="settings-row stacked"><p class="settings-row__title">Sessions limit</p><p class="settings-row__desc">How many recent sessions load on the dashboard.</p><div class="settings-row__control"><input id="setLimit" type="number" min="1" max="200" style="width:100%"/></div></div>
+</div></div>
+</div>
+<div id="setTabFeedback" style="display:none">
+<div class="settings-section"><h2>Feedback</h2>
+<div class="settings-card">
+<div class="settings-row stacked"><p class="settings-row__title">Message</p><p class="settings-row__desc">Share bugs or ideas (stored locally in logs for now).</p><div class="settings-row__control"><textarea id="setFeedback" rows="4" placeholder="What should we improve?" style="width:100%"></textarea></div></div>
+<div class="settings-footer"><button class="btn primary" id="setFeedbackSend">Send feedback</button><span class="hint" id="setFeedbackMsg"></span></div>
+</div></div>
+</div>
+<div id="setTabAbout" style="display:none">
+<div class="settings-section"><h2>About</h2>
+<div class="settings-card">
+<div class="settings-row"><p class="settings-row__title">Created by</p><p class="settings-row__desc">Author of this orchestrator dashboard.</p><div class="settings-row__control"><span>Armin Dashti</span></div></div>
+<div class="settings-row"><p class="settings-row__title">GitHub</p><p class="settings-row__desc">Source and other projects.</p><div class="settings-row__control"><a class="btn" href="https://github.com/armindashti" target="_blank" rel="noopener">Open profile</a></div></div>
+<div class="settings-row"><p class="settings-row__title">Product</p><p class="settings-row__desc">MCP bridge for OpenCode task orchestration.</p><div class="settings-row__control"><span>opencodemcp</span></div></div>
 </div></div>
 </div>
 <div id="setTabApp" style="display:none">
-<div class="card"><h3>App</h3>
-<div class="form">
-<label>API port</label><input id="setApiPort" type="number" min="1" max="65535"/>
-<label>WebUI port</label><input id="setWebuiPort" type="number" min="1" max="65535"/>
-<label>Base URL</label><input id="setBaseUrl" disabled/>
-<label>Directory</label><input id="setDir" disabled/>
-<label>Database</label><input id="setDb" disabled/>
+<div class="settings-section"><h2>App</h2>
+<div class="settings-card">
+<div class="settings-row stacked"><p class="settings-row__title">API port</p><p class="settings-row__desc">OpenCode MCP HTTP API listener.</p><div class="settings-row__control"><input id="setApiPort" type="number" min="1" max="65535" style="width:100%"/></div></div>
+<div class="settings-row stacked"><p class="settings-row__title">WebUI port</p><p class="settings-row__desc">This dashboard (requires restart).</p><div class="settings-row__control"><input id="setWebuiPort" type="number" min="1" max="65535" style="width:100%"/></div></div>
+<div class="settings-row stacked"><p class="settings-row__title">Base URL</p><p class="settings-row__desc">OpenCode server endpoint.</p><div class="settings-row__control"><input id="setBaseUrl" disabled style="width:100%"/></div></div>
+<div class="settings-row stacked"><p class="settings-row__title">Directory</p><p class="settings-row__desc">Default workspace for assign_task.</p><div class="settings-row__control"><input id="setDir" disabled style="width:100%"/></div></div>
+<div class="settings-row stacked"><p class="settings-row__title">Database</p><p class="settings-row__desc">SQLite path for settings and logs.</p><div class="settings-row__control"><input id="setDb" disabled style="width:100%"/></div></div>
+<div class="settings-footer"><button class="btn primary" id="setSave">Save settings</button><span class="hint" id="setMsg"></span></div>
+</div></div>
 </div>
-<div class="toolbar"><button class="btn primary" id="setSave">💾 Save settings</button><span class="hint" id="setMsg"></span></div>
-</div>
-</div>
+</div></div>
 </section>
 
-</main></div>
+</main>
+<footer class="site-foot"><a href="https://github.com/armindashti" target="_blank" rel="noopener">GitHub</a><span>Created by Armin Dashti</span></footer>
+</div></div>
 <div class="modal" id="modal"><div class="box"><div class="toolbar"><b id="mTitle">detail</b><span class="spacer"></span><button class="btn" id="mClose">✕</button></div><div id="mBody"></div></div></div>
 <script>
 const $=id=>document.getElementById(id);
@@ -465,18 +549,26 @@ function fmtT(ts){return fmtDT(ts)}
 function fmtDur(ms){if(ms==null||ms===''||!isFinite(Number(ms)))return '—';ms=Math.max(0,Math.round(Number(ms)));const s=Math.floor(ms/1000);if(s<60)return s+'s';const m=Math.floor(s/60);if(m<60)return m+'m '+pad(s%60)+'s';const h=Math.floor(m/60);return h+'h '+pad(m%60)+'m '+pad(s%60)+'s'}
 function tokStr(t){if(t==null||t==='')return '—';if(typeof t==='number')return t.toLocaleString();if(typeof t==='object'){const tot=(t.input||0)+(t.output||0)+(t.reasoning||0);return tot? tot.toLocaleString() + ' <span class="hint">('+ (t.input||0)+'/'+(t.output||0)+'/'+(t.reasoning||0)+')</span>':'—'}return String(t)}
 function scoreBadge(s){if(s==null)return '—';const c=s>=90?'hi':s>=70?'hi':s>=40?'mid':'lo';return '<span class="badge '+c+'">'+s+'</span>'}
-function applyTheme(){const th=state.settings?.theme||'system';const known=['light','dark','dark-plus','dracula','nord','solarized-light','solarized-dark','github-light','github-dark','monokai','tokyo-night'];let eff=th;if(th==='system'){eff=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}if(!known.includes(eff))eff='light';document.documentElement.dataset.theme=eff;document.body.dataset.density=state.settings?.density||'comfortable';$('themeBtn').textContent='◐ '+eff}
+function applyTheme(){const th=state.settings?.theme||'dark-plus';const known=['light','dark','dark-plus','dracula','nord','solarized-light','solarized-dark','github-light','github-dark','monokai','tokyo-night'];let eff=th;if(th==='system'){eff=matchMedia('(prefers-color-scheme: dark)').matches?'dark-plus':'light'}if(!known.includes(eff))eff='dark-plus';document.documentElement.dataset.theme=eff;document.body.dataset.density=state.settings?.density||'comfortable';const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.setAttribute('content',eff==='light'?'#f8fafc':'#252525');const btn=$('themeBtn');if(btn){const t=[...btn.childNodes].find(n=>n.nodeType===3);if(t)t.textContent=' '+eff}}
 function clientLog(level,msg){fetch('/api/logs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({level,message:String(msg).slice(0,500)})}).catch(()=>{})}
-// nav
-$('nav').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;state.page=b.dataset.page;document.querySelectorAll('#nav button').forEach(x=>x.classList.toggle('active',x===b));document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id==='page-'+state.page));$('title').textContent=b.textContent.trim().replace(/^[\p{Emoji}\s]+/u,'');$('backBtn').style.display='none';load()});
-$('backBtn').addEventListener('click',()=>{state.page='dashboard';document.querySelectorAll('#nav button').forEach(x=>x.classList.toggle('active',x.dataset.page==='dashboard'));document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id==='page-dashboard'));$('title').textContent='Dashboard';$('backBtn').style.display='none';load()});
+function pageTitle(btn){return btn?.dataset?.label||btn?.textContent?.trim()||'Dashboard'}
+function goPage(page,label){state.page=page;document.querySelectorAll('#nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===page));document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id==='page-'+page));$('title').textContent=label||pageTitle(document.querySelector('#nav button[data-page="'+page+'"]'));$('backBtn').style.display='none';load()}
+function initials(name){const p=String(name||'?').trim().split(/\\s+/);return ((p[0]?.[0]||'?')+(p[1]?.[0]||'')).toUpperCase().slice(0,2)}
+function syncUserFoot(me,st){const u=me?.user;if(!u)return;$('sideName').textContent=u.username||'User';$('sideAvatar').textContent=initials(u.username);$('sideSub').textContent='api '+(st?.ports?.api??'?')+' • webui '+(st?.ports?.webui??'?')}
+try{const collapsed=localStorage.getItem('ocmcp-sidebar')==='1';if(collapsed)$('appShell').classList.add('sidebar-collapsed')}catch{}
+$('sidebarToggle').onclick=()=>{const el=$('appShell');el.classList.toggle('sidebar-collapsed');try{localStorage.setItem('ocmcp-sidebar',el.classList.contains('sidebar-collapsed')?'1':'0')}catch{}};
+function openSettings(tab){goPage('settings');showSetTab(tab||'profile')}
+$('sideSettings').onclick=()=>openSettings('appearance');
+$('sideProfile').onclick=()=>openSettings('profile');
+$('nav').addEventListener('click',e=>{const b=e.target.closest('button');if(!b||!b.dataset.page)return;goPage(b.dataset.page,pageTitle(b))});
+$('backBtn').addEventListener('click',()=>goPage('dashboard','Dashboard'));
 // dashboard
 async function loadDashboard(){const lim=state.settings?.sessionsLimit||20;
 try{
 const [st,se,sc]=await Promise.all([j('/api/status'),j('/api/sessions?limit='+lim),j('/api/scores')]);
 $('statusPre').textContent=JSON.stringify(st,null,2);
 const ok=!!st.ok;$('healthDot').className='dot '+(ok?'ok':'bad');$('healthTxt').textContent=(st.baseUrl||'')+(ok?' • reachable':' • unreachable');
-$('sidefoot').textContent='api '+(st.ports?.api??'?')+' • webui '+(st.ports?.webui??'?');
+const meFoot=await j('/api/auth/me').catch(()=>({}));syncUserFoot(meFoot,st);
 const sess=se.sessions||[];const rank=sc.ranking||[];
 const running=sess.filter(s=>s.running).length;
 let tokens=0;try{tokens=sess.reduce((a,s)=>a+((s.tokens?.input||0)+(s.tokens?.output||0)+(s.tokens?.reasoning||0)),0)}catch{}
@@ -579,15 +671,16 @@ $('pgHint').textContent='running…';$('pgOut').textContent='running '+state.pgT
 try{const d=await j('/api/playground/'+state.pgTool,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});$('pgOut').textContent=JSON.stringify(d,null,2).slice(0,20000);$('pgHint').textContent='done';clientLog(d&&d.error?'error':'info','playground '+state.pgTool+': '+(d.error||'ok'));if(state.pgTool==='score_to_agent'&&!d.error)loadTasks()}catch(e){$('pgOut').textContent='error: '+e;$('pgHint').textContent='failed';clientLog('error','playground '+state.pgTool+': '+e)}}
 $('pgRun').onclick=pgRun;
 // settings tabs
-function showSetTab(tab){state.setTab=tab;document.querySelectorAll('#setTabs button').forEach(x=>x.classList.toggle('active',x.dataset.tab===tab));['Profile','Appearance','Behaviour','App'].forEach(name=>{const el=$('setTab'+name);if(el)el.style.display=name.toLowerCase()===tab?'block':'none'})}
+function showSetTab(tab){state.setTab=tab;document.querySelectorAll('#setTabs button').forEach(x=>x.classList.toggle('active',x.dataset.tab===tab));['Profile','Appearance','Behaviour','Feedback','About','App'].forEach(name=>{const el=$('setTab'+name);if(el)el.style.display=name.toLowerCase()===tab?'block':'none'})}
 $('setTabs').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;showSetTab(b.dataset.tab)});
 // settings
-async function loadSettingsUI(){try{const [s,st,me]=await Promise.all([j('/api/settings'),j('/api/status'),j('/api/auth/me')]);state.settings=s.settings||s;$('setTheme').value=state.settings.theme;$('setDensity').value=state.settings.density;$('setLogsLevel').value=state.settings.logsLevel||'all';$('setRefresh').value=state.settings.refreshMs;$('setLimit').value=state.settings.sessionsLimit;$('setApiPort').value=(s.ports||st.ports||{}).api??st.ports?.api??'';$('setWebuiPort').value=(s.ports||st.ports||{}).webui??st.ports?.webui??'';$('setBaseUrl').value=st.baseUrl||'';$('setDir').value=st.directory||'';$('setDb').value=st.dbPath||'';if(me.user){$('profUser').value=me.user.username||'';$('profEmail').value=me.user.email||'';$('sidefoot').textContent=(me.user.username||'?')+' • api '+(st.ports?.api??'?')+' • webui '+(st.ports?.webui??'?')}state.logLevel=state.settings.logsLevel||'all';applyTheme();armTimer()}catch(e){$('setMsg').textContent='load failed: '+e}}
+async function loadSettingsUI(){try{const [s,st,me]=await Promise.all([j('/api/settings'),j('/api/status'),j('/api/auth/me')]);state.settings=s.settings||s;$('setTheme').value=state.settings.theme;$('setDensity').value=state.settings.density;$('setLogsLevel').value=state.settings.logsLevel||'all';$('setRefresh').value=state.settings.refreshMs;$('setLimit').value=state.settings.sessionsLimit;$('setApiPort').value=(s.ports||st.ports||{}).api??st.ports?.api??'';$('setWebuiPort').value=(s.ports||st.ports||{}).webui??st.ports?.webui??'';$('setBaseUrl').value=st.baseUrl||'';$('setDir').value=st.directory||'';$('setDb').value=st.dbPath||'';if(me.user){$('profUser').value=me.user.username||'';$('profEmail').value=me.user.email||'';syncUserFoot(me,st)}state.logLevel=state.settings.logsLevel||'all';applyTheme();armTimer()}catch(e){$('setMsg').textContent='load failed: '+e}}
+$('setFeedbackSend').onclick=async()=>{const msg=($('setFeedback').value||'').trim();if(!msg){$('setFeedbackMsg').textContent='Enter a message first';return}$('setFeedbackMsg').textContent='sending…';try{await j('/api/logs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({level:'info',message:'feedback: '+msg})});$('setFeedback').value='';$('setFeedbackMsg').textContent='Thanks — logged ✓'}catch(e){$('setFeedbackMsg').textContent='error: '+e}};
 $('profLogout').onclick=async()=>{try{await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'});location.href='/login'}catch(e){$('profMsg').textContent='error: '+e}};
 $('setSave').onclick=async()=>{const body={theme:$('setTheme').value,density:$('setDensity').value,logsLevel:$('setLogsLevel').value,refreshMs:Number($('setRefresh').value),sessionsLimit:Number($('setLimit').value),apiPort:Number($('setApiPort').value)||undefined,webuiPort:Number($('setWebuiPort').value)||undefined};$('setMsg').textContent='saving…';try{const d=await j('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(d.error){$('setMsg').textContent='error: '+d.error}else{state.settings=d.settings;$('setMsg').textContent='saved ✓';applyTheme();armTimer();clientLog('info','settings saved')}}catch(e){$('setMsg').textContent='error: '+e}};
 $('themeBtn').onclick=()=>{const order=['light','dark','dark-plus','dracula','nord','solarized-light','solarized-dark','github-light','github-dark','monokai','tokyo-night'];const cur=document.documentElement.dataset.theme||'light';const next=order[(order.indexOf(cur)+1)%order.length];state.settings.theme=next;applyTheme();fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({theme:next})}).catch(()=>{});try{localStorage.setItem('ocmcp-theme',next)}catch{}};
 function armTimer(){if(state.timer)clearInterval(state.timer);const ms=state.settings?.refreshMs||0;if(ms>0)state.timer=setInterval(()=>{if(state.page==='dashboard')loadDashboard();if(state.page==='logs'&&$('logAuto').checked)loadLogs()},ms)}
-async function boot(){try{const s=await j('/api/settings');if(s.error==='unauthorized')return;state.settings=s.settings||s;try{const lt=localStorage.getItem('ocmcp-theme');if(lt&&!s.settings)state.settings.theme=lt}catch{}}catch{state.settings={theme:'system',density:'comfortable',refreshMs:15000,sessionsLimit:20,logsLevel:'all'}}applyTheme();showSetTab('profile');renderPgForm();load();loadSettingsUI();armTimer();j('/api/auth/me').then(me=>{if(me.user)$('sidefoot').textContent=(me.user.username||'?')+' • signed in'})}
+async function boot(){try{const s=await j('/api/settings');if(s.error==='unauthorized')return;state.settings=s.settings||s;try{const lt=localStorage.getItem('ocmcp-theme');if(lt&&state.settings)state.settings.theme=lt}catch{}}catch{state.settings={theme:'dark-plus',density:'comfortable',refreshMs:15000,sessionsLimit:20,logsLevel:'all'}}applyTheme();showSetTab('profile');renderPgForm();load();loadSettingsUI();armTimer();j('/api/auth/me').then(me=>{if(me.user){$('profUser').value=me.user.username||'';$('profEmail').value=me.user.email||'';syncUserFoot(me,{ports:{}})}})}
 async function load(){if(state.page==='dashboard')loadDashboard();if(state.page==='tasks')loadTasks();if(state.page==='providers')loadProviders();if(state.page==='skill')loadSkill();if(state.page==='stats')loadStats();if(state.page==='logs')loadLogs();if(state.page==='settings')loadSettingsUI()}
 $('refreshBtn').onclick=load;$('taskReload').onclick=loadTasks;$('provReload').onclick=loadProviders;$('logReload').onclick=loadLogs;
 $('taskSearch').addEventListener('input',loadTasks);$('provSearch').addEventListener('input',loadProviders);$('logSearch').addEventListener('input',loadLogs);$('taskLimit').addEventListener('change',loadTasks);
@@ -597,43 +690,26 @@ boot();
 </script></body></html>`;
 
 const TASK_PAGE = `<!doctype html>
-<html lang="en" data-theme="light"><head><meta charset="utf-8"/>
+<html lang="en" data-theme="dark-plus"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="theme-color" content="#252525"/>
 <title>task detail • opencodemcp</title>
-<style>
-:root{--bg:#f8fafc;--panel:#fff;--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--accent:#2563eb;--chip:#f1f5f9;--radius:12px}
-[data-theme="dark"]{--bg:#0b1220;--panel:#111c33;--ink:#e2e8f0;--muted:#94a3b8;--line:#243355;--accent:#60a5fa;--chip:#1a2742}
-[data-theme="dark-plus"]{--bg:#1e1e1e;--panel:#252526;--ink:#d4d4d4;--muted:#9d9d9d;--line:#3e3e42;--accent:#007acc;--chip:#2d2d30}
-[data-theme="dracula"]{--bg:#282a36;--panel:#343746;--ink:#f8f8f2;--muted:#9a9cb3;--line:#44475a;--accent:#bd93f9;--chip:#44475a}
-[data-theme="nord"]{--bg:#2e3440;--panel:#3b4252;--ink:#eceff4;--muted:#9aa3b2;--line:#4c566a;--accent:#88c0d0;--chip:#434c5e}
-[data-theme="solarized-light"]{--bg:#fdf6e3;--panel:#eee8d5;--ink:#586e75;--muted:#839496;--line:#d3c69f;--accent:#268bd2;--chip:#e7dfc8}
-[data-theme="solarized-dark"]{--bg:#002b36;--panel:#073642;--ink:#eee8d5;--muted:#93a1a1;--line:#174652;--accent:#2aa198;--chip:#0e4a57}
-[data-theme="github-light"]{--bg:#ffffff;--panel:#f6f8fa;--ink:#1f2328;--muted:#59636e;--line:#d1d9e0;--accent:#0969da;--chip:#eaeef2}
-[data-theme="github-dark"]{--bg:#0d1117;--panel:#161b22;--ink:#e6edf3;--muted:#9198a1;--line:#30363d;--accent:#4493f8;--chip:#21262d}
-[data-theme="monokai"]{--bg:#272822;--panel:#3e3d32;--ink:#f8f8f2;--muted:#bebda8;--line:#49483e;--accent:#a6e22e;--chip:#49483e}
-[data-theme="tokyo-night"]{--bg:#1a1b26;--panel:#24283b;--ink:#c0caf5;--muted:#7f87a8;--line:#343b5c;--accent:#7aa2f7;--chip:#2b3049}
-*{box-sizing:border-box}
-body{margin:0;font-family:system-ui,"Segoe UI",Arial,sans-serif;background:var(--bg);color:var(--ink)}
-main{padding:22px 26px;max-width:none;width:100%;min-width:0}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin:12px 0}
-.hint{color:var(--muted);font-size:12px}
-pre{background:var(--chip);padding:12px;border-radius:8px;overflow:auto;font-size:12.5px;white-space:pre-wrap}
-code{background:var(--chip);padding:2px 6px;border-radius:6px}
-.topbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-.back-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;font-size:13px;text-decoration:none}
-.back-btn:hover{background:var(--chip)}
-</style></head><body>
+${WEBUI_FONTS}
+<style>${WEBUI_SHARED_CSS}</style></head><body>
+<div class="main-col" style="min-height:100vh">
 <main>
-<div class="topbar"><a class="back-btn" href="/">← Back</a><h2 id="title">Task</h2><span class="hint" id="sub">loading…</span></div>
-<div class="card"><h3>Request from orchester</h3><div id="req">loading…</div></div>
-<div class="card"><h3>Response from MCP</h3><div id="res">loading…</div></div>
+<div class="topbar"><a class="btn back-btn" href="/" style="width:auto;display:inline-flex">← Back</a><h2 id="title">Task</h2><span class="hint" id="sub">loading…</span></div>
+<div class="card"><h4>Request from orchester</h4><div id="req">loading…</div></div>
+<div class="card"><h4>Response from MCP</h4><div id="res">loading…</div></div>
 </main>
+<footer class="site-foot"><a href="https://github.com/armindashti" target="_blank" rel="noopener">GitHub</a><span>Created by Armin Dashti</span></footer>
+</div>
 <script>
 const pad=n=>String(n).padStart(2,'0');
 function fmtDT(ts){if(ts==null||ts==='')return '—';const d=new Date(Number(ts));if(isNaN(d.getTime()))return '—';return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+'-'+pad(d.getMinutes())+'-'+pad(d.getSeconds())}
 function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 async function boot(){const q=new URLSearchParams(location.search);const sid=q.get('sessionID')||'';const ts=q.get('ts');if(!sid){document.getElementById('sub').textContent='missing sessionID';return}
-try{const s=await fetch('/api/settings',{credentials:'same-origin'}).then(r=>r.status===401?null:r.json());const th=(s?.settings||{}).theme||'system';const known=['light','dark','dark-plus','dracula','nord','solarized-light','solarized-dark','github-light','github-dark','monokai','tokyo-night'];document.documentElement.dataset.theme=th==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):(known.includes(th)?th:'light')}catch{}
+try{const s=await fetch('/api/settings',{credentials:'same-origin'}).then(r=>r.status===401?null:r.json());const th=(s?.settings||{}).theme||'dark-plus';const known=['light','dark','dark-plus','dracula','nord','solarized-light','solarized-dark','github-light','github-dark','monokai','tokyo-night'];document.documentElement.dataset.theme=th==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark-plus':'light'):(known.includes(th)?th:'dark-plus')}catch{}
 try{const u='/api/task?sessionID='+encodeURIComponent(sid)+(ts?'&ts='+encodeURIComponent(ts):'');const d=await fetch(u,{credentials:'same-origin'}).then(async r=>{if(r.status===401){location.href='/login';return {error:'unauthorized'}}return r.json()});if(d.error){document.getElementById('sub').textContent='error: '+d.error;return}
 document.getElementById('title').textContent='Task • '+(d.request?.orchester||'?');document.getElementById('sub').textContent=(sid||'')+' • '+fmtDT(d.request?.assignedAt);
 document.getElementById('req').innerHTML='<pre>'+esc(d.request?.task||'(empty)')+'</pre><p class="hint">orchester <b>'+esc(d.request?.orchester||'—')+'</b> • agent(provider) <b>'+esc(d.request?.provider||'—')+'</b> • model <b>'+esc(d.request?.model||'—')+'</b> • assigned <b>'+esc(fmtDT(d.request?.assignedAt))+'</b> • session <code>'+esc(sid)+'</code></p>';
