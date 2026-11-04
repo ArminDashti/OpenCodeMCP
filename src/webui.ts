@@ -888,6 +888,11 @@ async function taskDetailPayload(sessionID: string, ts?: number): Promise<Record
 // Server
 // ---------------------------------------------------------------------------
 
+function webuiListenHost(): string {
+  const host = process.env.WEBUI_HOST?.trim();
+  return host && host.length > 0 ? host : "127.0.0.1";
+}
+
 /** Start the dashboard HTTP server. Resolves when listening; never resolves on close. */
 export function startWebui(port: number): Promise<http.Server> {
   ensureDefaultUser();
@@ -1393,6 +1398,6 @@ export function startWebui(port: number): Promise<http.Server> {
 
   return new Promise((resolve, reject) => {
     server.on("error", reject);
-    server.listen(port, "127.0.0.1", () => resolve(server));
+    server.listen(port, webuiListenHost(), () => resolve(server));
   });
 }

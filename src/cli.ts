@@ -249,14 +249,20 @@ async function doctor(): Promise<void> {
 /** Open the default browser at the given URL (cross-platform, best-effort). */
 function openBrowser(url: string): void {
   const platform = process.platform;
+  if (/^(0|false|no|off)$/i.test(process.env.WEBUI_OPEN_BROWSER ?? "")) return;
   try {
+    const spawnBrowser = (cmd: string, args: string[]) => {
+      const child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+      child.on("error", () => {});
+      child.unref();
+    };
     if (platform === "win32") {
       // `start` is a cmd builtin; spawn it detached so it does not block.
-      spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore" }).unref();
+      spawnBrowser("cmd", ["/c", "start", "", url]);
     } else if (platform === "darwin") {
-      spawn("open", [url], { detached: true, stdio: "ignore" }).unref();
+      spawnBrowser("open", [url]);
     } else {
-      spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
+      spawnBrowser("xdg-open", [url]);
     }
   } catch {
     // best-effort — never block the server on a browser launch failure

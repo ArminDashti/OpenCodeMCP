@@ -1,5 +1,7 @@
 # MCP uses stdio - Cursor spawns `docker compose run --rm -i mcp` (see README).
-# OpenCode server: docker compose up -d opencode   (always-on, 127.0.0.1:4096)
+# API + dashboard: docker compose up -d --build opencode webui
+#   API:    http://127.0.0.1:4096
+#   WebUI:  http://127.0.0.1:28479
 # Build: docker compose build
 # Smoke:  docker compose run --rm -i mcp   (blocks on stdin; Ctrl+C to exit)
 
@@ -26,6 +28,37 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  webui:
+    build: .
+    image: opencode-mcp:local
+    entrypoint: ["node", "dist/cli.js"]
+    command: ["webui", "--port", "28479"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:28479:28479"
+    depends_on:
+      opencode:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      WEBUI_HOST: "0.0.0.0"
+      WEBUI_OPEN_BROWSER: "0"
+      OPENCODE_URL: http://opencode:4096
+      OPENCODE_PASSWORD: ${OPENCODE_PASSWORD:-}
+      OPENCODE_AUTOSTART: "0"
+      OPENCODE_DIRECTORY: ${OPENCODE_DIRECTORY:-/workspace}
+    volumes:
+      - ${WORKSPACE_HOST:-.}:/workspace
+      - opencode-mcp-data:/root/.opencode-mcp
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:28479/login || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   mcp:
     build: .
