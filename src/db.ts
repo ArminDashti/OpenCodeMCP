@@ -288,6 +288,12 @@ export function deleteApiKey(provider: string): void {
 // logs
 // ---------------------------------------------------------------------------
 
+export type DashboardLogLevel = "info" | "warn" | "error";
+
+export function appendLog(level: DashboardLogLevel, message: string, source = "webui"): void {
+  insertLog(level, source, String(message).slice(0, 2000));
+}
+
 export function insertLog(level: string, source: string, message: string): void {
   openDb()
     .prepare("INSERT INTO logs (ts, level, source, message) VALUES (?, ?, ?, ?)")

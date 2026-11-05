@@ -8,7 +8,7 @@ Same idea as driving an agent over ACP, but the orchestrator speaks MCP.
 
 ```
 orchestrator (Cursor / Claude Code / …)
-        │  MCP (stdio): assign_task · models_list · score_to_agent · fetch_session
+        │  MCP (stdio): assign_task · model · providers · score · sessions
         ▼
    opencode-mcp
         │  HTTP (OpenCode v2 API, /api/*)
@@ -20,11 +20,11 @@ orchestrator (Cursor / Claude Code / …)
 
 | Tool | Purpose |
 | --- | --- |
-| `assign_task` | Give OpenCode a task. Creates a session (or continues one), sets agent/model/directory, optionally attaches files, and by default **blocks until the run goes idle**, returning the agent's reply, tool-call count, tokens and cost. |
-| `models_list` | The models the orchestrator may choose from — `provider/model` id, context window, output limit, tool support, variants (effort tiers), price, availability, plus the current server default. |
-| `providers_list` | Supported providers with verified base URLs, key endpoints, API-key env vars, docs links and transparent logo files. |
-| `score_to_agent` | Record how well an agent handled a task (0–100) and get back the per-agent ranking. Scores persist locally so assignment decisions can be made on evidence. |
-| `fetch_session` | List sessions, or read one in detail: status, agent, model, cost, tokens and a compact transcript including tool calls. Use it to poll a `wait:false` dispatch or review work before scoring. |
+| `assign_task` | Run a prompt; returns `sessionId`, `response`, `duration`, `startedAt`, `finishedAt`. |
+| `providers` | Supported provider ids (`provider[]`). |
+| `model` | Search/list models; returns `{ modelId, free }[]`. |
+| `score` | Score a session 0–10; returns `result`: `success` or `fail`. |
+| `sessions` | Filter sessions; returns `sessionId[]` (default limit 16). |
 
 ### Orchestration loop
 

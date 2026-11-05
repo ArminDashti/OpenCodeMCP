@@ -1,7 +1,7 @@
 {
   "name": "opencode-mcp",
   "version": "0.1.0",
-  "description": "MCP server that lets an orchestrator (Cursor, Claude Code, any MCP client) drive OpenCode: assign_task, models_list, score_to_agent, fetch_session.",
+  "description": "MCP server that lets an orchestrator drive OpenCode: assign_task, model, providers, score, sessions.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {

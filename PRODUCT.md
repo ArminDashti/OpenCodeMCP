@@ -35,7 +35,7 @@ An MCP-native control plane for OpenCode—not a replacement for ACP/`opencode a
 
 ## Capabilities and Constraints
 
-**MCP tools:** `assign_task`, `models_list`, `providers_list`, `score_to_agent`, `fetch_session`.
+**MCP tools:** `assign_task`, `model`, `providers`, `score`, `sessions`.
 
 **Behaviors:** optional session continuation; `wait` default true; `autoApprove` for permissions; provider/model normalization; OpenCode v2 `/api/*` quirks handled (async prompt, idle detection, listing limits).
 

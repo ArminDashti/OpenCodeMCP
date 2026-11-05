@@ -9,7 +9,7 @@ import { OpenCode } from "./opencode.js";
 import { loadStore, aggregate, aggregateModels, recordScore, splitModelRef } from "./scores.js";
 import { PROVIDERS, providerInputFields } from "./providers.js";
 import { compactSession, renderTranscript, waitForIdle, countToolCalls, collectReply, deriveOutcome } from "./render.js";
-import { openDb, insertLog, listLogs, clearLogs, getSetting, setSetting, upsertApiKey, listApiKeys, deleteApiKey, getApiKey, getUserByUsername } from "./db.js";
+import { openDb, appendLog, listLogs, clearLogs, getSetting, setSetting, upsertApiKey, listApiKeys, deleteApiKey, getApiKey, getUserByUsername } from "./db.js";
 import {
   clearSessionCookieHeader,
   ensureDefaultUser,
@@ -22,6 +22,12 @@ import {
   sessionCookieHeader,
 } from "./auth.js";
 import { SKILL_MARKDOWN, SKILL_NAME, SKILL_VERSION, skillFile } from "./skill.js";
+import {
+  filterSessionIds,
+  formatCompactTimestamp,
+  listModelEntries,
+  resolveDirectory,
+} from "./mcp-api.js";
 
 // ---------------------------------------------------------------------------
 // Log ring (persisted to SQLite)
@@ -37,7 +43,7 @@ export interface LogEntry {
 
 export function pushLog(level: LogLevel, message: string, source = "webui"): LogEntry {
   const entry: LogEntry = { ts: Date.now(), level, source, message: String(message).slice(0, 2000) };
-  insertLog(level, source, entry.message);
+  appendLog(level, source, entry.message);
   return entry;
 }
 
@@ -134,41 +140,44 @@ function saveSettings(patch: Partial<WebuiSettings>): WebuiSettings {
 }
 
 // ---------------------------------------------------------------------------
-// Shared WebUI chrome (Yoda Admin–aligned tokens + Armin curations)
+// Shared WebUI chrome (Apple fluid-interface tokens + existing theme palette)
 // ---------------------------------------------------------------------------
 
-const WEBUI_FONTS =
-  '<link rel="preconnect" href="https://fonts.googleapis.com"/><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>' +
-  '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>';
+/** System stack first (Apple-style); no webfont on the input path. */
+const WEBUI_FONTS = "";
 
 const WEBUI_SHARED_CSS = `
-:root{--bg:#f8fafc;--panel:#fff;--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--accent:#2563eb;--ok:#15803d;--warn:#b45309;--bad:#b42318;--chip:#f1f5f9;--radius:8px;--sidebar-w:240px;--switch-off:#39393d;--switch-on:#34c759}
-[data-theme="dark"]{--bg:#0b1220;--panel:#111c33;--ink:#e2e8f0;--muted:#94a3b8;--line:#243355;--accent:#2563eb;--chip:#1a2742}
-[data-theme="dark-plus"]{--bg:#1e1e1e;--panel:#252525;--ink:#e0e0e0;--muted:#9d9d9d;--line:#333333;--accent:#2563eb;--chip:#2d2d2d;color-scheme:dark}
-[data-theme="dracula"]{--bg:#282a36;--panel:#343746;--ink:#f8f8f2;--muted:#9a9cb3;--line:#44475a;--accent:#bd93f9;--chip:#44475a}
-[data-theme="nord"]{--bg:#2e3440;--panel:#3b4252;--ink:#eceff4;--muted:#9aa3b2;--line:#4c566a;--accent:#88c0d0;--chip:#434c5e}
-[data-theme="solarized-light"]{--bg:#fdf6e3;--panel:#eee8d5;--ink:#586e75;--muted:#839496;--line:#d3c69f;--accent:#268bd2;--chip:#e7dfc8}
-[data-theme="solarized-dark"]{--bg:#002b36;--panel:#073642;--ink:#eee8d5;--muted:#93a1a1;--line:#174652;--accent:#2aa198;--chip:#0e4a57}
-[data-theme="github-light"]{--bg:#ffffff;--panel:#f6f8fa;--ink:#1f2328;--muted:#59636e;--line:#d1d9e0;--accent:#0969da;--chip:#eaeef2}
-[data-theme="github-dark"]{--bg:#0d1117;--panel:#161b22;--ink:#e6edf3;--muted:#9198a1;--line:#30363d;--accent:#4493f8;--chip:#21262d}
-[data-theme="monokai"]{--bg:#272822;--panel:#3e3d32;--ink:#f8f8f2;--muted:#bebda8;--line:#49483e;--accent:#a6e22e;--chip:#49483e}
-[data-theme="tokyo-night"]{--bg:#1a1b26;--panel:#24283b;--ink:#c0caf5;--muted:#7f87a8;--line:#343b5c;--accent:#7aa2f7;--chip:#2b3049}
+:root{--bg:#f8fafc;--panel:#fff;--surface:#fff;--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--accent:#2563eb;--ok:#15803d;--warn:#b45309;--bad:#b42318;--chip:#f1f5f9;--radius:12px;--sidebar-w:240px;--switch-off:#39393d;--switch-on:#34c759;--glass:rgba(255,255,255,.72);--glass-edge:rgba(255,255,255,.55);--shadow-sm:0 1px 2px rgba(15,23,42,.05),0 8px 24px rgba(15,23,42,.06);--shadow-md:0 12px 40px rgba(15,23,42,.12);--ease-out:cubic-bezier(.25,.1,.25,1);--ease-settle:cubic-bezier(.32,.72,0,1)}
+[data-theme="dark"]{--bg:#0b1220;--panel:#111c33;--surface:#111c33;--ink:#e2e8f0;--muted:#94a3b8;--line:#243355;--accent:#2563eb;--chip:#1a2742;--glass:rgba(17,28,51,.82);--glass-edge:rgba(255,255,255,.08);--shadow-sm:0 1px 2px rgba(0,0,0,.25),0 8px 24px rgba(0,0,0,.35);--shadow-md:0 12px 40px rgba(0,0,0,.45)}
+[data-theme="dark-plus"]{--bg:#1e1e1e;--panel:#252525;--surface:#252525;--ink:#e0e0e0;--muted:#9d9d9d;--line:#333333;--accent:#2563eb;--chip:#2d2d2d;--glass:rgba(37,37,37,.78);--glass-edge:rgba(255,255,255,.1);--shadow-sm:0 1px 2px rgba(0,0,0,.35),0 8px 24px rgba(0,0,0,.4);--shadow-md:0 12px 40px rgba(0,0,0,.55);color-scheme:dark}
+[data-theme="dracula"]{--bg:#282a36;--panel:#343746;--surface:#343746;--ink:#f8f8f2;--muted:#9a9cb3;--line:#44475a;--accent:#bd93f9;--chip:#44475a;--glass:rgba(52,55,70,.82);--glass-edge:rgba(255,255,255,.08)}
+[data-theme="nord"]{--bg:#2e3440;--panel:#3b4252;--surface:#3b4252;--ink:#eceff4;--muted:#9aa3b2;--line:#4c566a;--accent:#88c0d0;--chip:#434c5e;--glass:rgba(59,66,82,.82);--glass-edge:rgba(255,255,255,.08)}
+[data-theme="solarized-light"]{--bg:#fdf6e3;--panel:#eee8d5;--surface:#eee8d5;--ink:#586e75;--muted:#839496;--line:#d3c69f;--accent:#268bd2;--chip:#e7dfc8;--glass:rgba(238,232,213,.85);--glass-edge:rgba(255,255,255,.5)}
+[data-theme="solarized-dark"]{--bg:#002b36;--panel:#073642;--surface:#073642;--ink:#eee8d5;--muted:#93a1a1;--line:#174652;--accent:#2aa198;--chip:#0e4a57;--glass:rgba(7,54,66,.85);--glass-edge:rgba(255,255,255,.08)}
+[data-theme="github-light"]{--bg:#ffffff;--panel:#f6f8fa;--surface:#f6f8fa;--ink:#1f2328;--muted:#59636e;--line:#d1d9e0;--accent:#0969da;--chip:#eaeef2;--glass:rgba(246,248,250,.88);--glass-edge:rgba(255,255,255,.6)}
+[data-theme="github-dark"]{--bg:#0d1117;--panel:#161b22;--surface:#161b22;--ink:#e6edf3;--muted:#9198a1;--line:#30363d;--accent:#4493f8;--chip:#21262d;--glass:rgba(22,27,34,.85);--glass-edge:rgba(255,255,255,.08)}
+[data-theme="monokai"]{--bg:#272822;--panel:#3e3d32;--surface:#3e3d32;--ink:#f8f8f2;--muted:#bebda8;--line:#49483e;--accent:#a6e22e;--chip:#49483e;--glass:rgba(62,61,50,.85);--glass-edge:rgba(255,255,255,.08)}
+[data-theme="tokyo-night"]{--bg:#1a1b26;--panel:#24283b;--surface:#24283b;--ink:#c0caf5;--muted:#7f87a8;--line:#343b5c;--accent:#7aa2f7;--chip:#2b3049;--glass:rgba(36,40,59,.85);--glass-edge:rgba(255,255,255,.08)}
 *{box-sizing:border-box}
-body{margin:0;font-family:Inter,system-ui,"Segoe UI",Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.5}
-@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
-.app{display:grid;grid-template-columns:var(--sidebar-w) 1fr;min-height:100vh;transition:grid-template-columns .18s ease}
+body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.5;font-optical-sizing:auto;-webkit-font-smoothing:antialiased}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+@media(prefers-reduced-transparency:reduce){:root{--glass:var(--panel);--glass-edge:var(--line)}aside,.topbar,.modal .box,.login-card{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}}
+@media(prefers-contrast:more){.card,.login-card,.modal .box{border-width:2px}button.btn,.icon-btn{border-width:2px}}
+.app{display:grid;grid-template-columns:var(--sidebar-w) 1fr;min-height:100vh;transition:grid-template-columns .28s var(--ease-out)}
 .app.sidebar-collapsed{--sidebar-w:72px}
-aside{background:var(--panel);border-right:1px solid var(--line);padding:14px 10px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;overflow:hidden}
+aside{background:var(--glass);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border-right:1px solid var(--glass-edge);padding:14px 10px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;overflow:hidden;box-shadow:inset -1px 0 0 var(--glass-edge)}
 .sidebar-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 6px 10px}
 .brand{font-weight:800;font-size:16px;letter-spacing:.2px;line-height:1.2}
 .brand small{display:block;font-weight:500;color:var(--muted);font-size:11px;margin-top:2px}
-.icon-btn{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);cursor:pointer;flex-shrink:0}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border:1px solid color-mix(in srgb,var(--line) 70%,transparent);border-radius:10px;background:color-mix(in srgb,var(--bg) 80%,transparent);color:var(--ink);cursor:pointer;flex-shrink:0;transition:transform 100ms var(--ease-out),background 150ms var(--ease-out)}
 .icon-btn:hover{background:var(--chip)}
+.icon-btn:active{transform:scale(.97)}
 .nav{display:flex;flex-direction:column;gap:2px;flex:1;min-height:0;overflow-y:auto}
-.nav button{display:flex;width:100%;text-align:left;gap:10px;align-items:center;padding:9px 10px;border:1px solid transparent;background:transparent;color:var(--muted);border-radius:8px;cursor:pointer;font-size:13px;font-weight:500}
+.nav button{display:flex;width:100%;text-align:left;gap:10px;align-items:center;padding:9px 10px;border:1px solid transparent;background:transparent;color:var(--muted);border-radius:10px;cursor:pointer;font-size:13px;font-weight:500;letter-spacing:.01em;transition:transform 100ms var(--ease-out),background 150ms var(--ease-out),color 150ms var(--ease-out)}
 .nav button .ico{width:18px;height:18px;flex-shrink:0;opacity:.85}
-.nav button.active,.nav button:hover{color:var(--ink);background:var(--bg);font-weight:600}
-.nav button.active{border-color:var(--line)}
+.nav button.active,.nav button:hover{color:var(--ink);background:color-mix(in srgb,var(--bg) 88%,var(--chip));font-weight:600}
+.nav button.active{border-color:color-mix(in srgb,var(--line) 65%,transparent);box-shadow:var(--shadow-sm)}
+.nav button:active{transform:scale(.98)}
 .app.sidebar-collapsed .nav-label,.app.sidebar-collapsed .brand-text,.app.sidebar-collapsed .side-user-meta{display:none}
 .app.sidebar-collapsed .nav button{justify-content:center;padding:10px}
 .back-btn{display:flex;width:100%;text-align:left;gap:10px;align-items:center;padding:9px 10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:8px;cursor:pointer;font-size:13px;margin-bottom:6px}
@@ -182,24 +191,25 @@ aside{background:var(--panel);border-right:1px solid var(--line);padding:14px 10
 .side-user-meta .sub{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .main-col{display:flex;flex-direction:column;min-height:100vh;min-width:0}
 main{padding:20px 24px 12px;flex:1;max-width:none;width:100%;min-width:0}
-.site-foot{padding:10px 24px 16px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.site-foot a{color:var(--accent);text-decoration:none}
+.site-foot{padding:10px 24px 16px;border-top:1px solid color-mix(in srgb,var(--line) 70%,transparent);font-size:12px;color:var(--muted);letter-spacing:.02em;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.site-foot a{color:var(--accent);text-decoration:none;font-weight:500}
 .site-foot a:hover{text-decoration:underline}
-.topbar{display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap}
-.topbar h2{margin:0;font-size:20px;font-weight:700}
+.topbar{display:flex;align-items:center;gap:10px;margin:0 0 18px;padding:14px 0 16px;flex-wrap:wrap;position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--bg) 70%,transparent);backdrop-filter:blur(16px) saturate(160%);-webkit-backdrop-filter:blur(16px) saturate(160%);border-bottom:1px solid color-mix(in srgb,var(--line) 55%,transparent);margin-bottom:18px}
+.topbar h2{margin:0;font-size:1.35rem;font-weight:700;line-height:1.12;letter-spacing:-.022em}
 .dot{width:9px;height:9px;border-radius:50%;background:#999;display:inline-block}
 .dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}
 .spacer{flex:1}
 input,select,textarea{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit}
 input:focus,select:focus,textarea:focus{outline:2px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:1px}
-button.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer;font-size:13px;font-weight:500;font-family:inherit}
+button.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;border:1px solid color-mix(in srgb,var(--line) 75%,transparent);background:color-mix(in srgb,var(--panel) 92%,var(--bg));color:var(--ink);cursor:pointer;font-size:13px;font-weight:500;font-family:inherit;transition:transform 100ms var(--ease-out),background 150ms var(--ease-out),filter 150ms var(--ease-out)}
 button.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
-button.btn:hover{filter:brightness(.97)}
+button.btn:hover{filter:brightness(.98)}
+button.btn:active{transform:scale(.97)}
 button.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:12px 0}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px}
-.card h4{margin:0 0 6px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:600}
-.card .v{font-size:22px;font-weight:800}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin:12px 0}
+.card{background:var(--surface);border:1px solid color-mix(in srgb,var(--line) 75%,transparent);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow-sm)}
+.card h4{margin:0 0 8px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+.card .v{font-size:1.5rem;font-weight:800;line-height:1.1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 @media(max-width:900px){.app{grid-template-columns:1fr}.app.sidebar-collapsed{--sidebar-w:1fr}aside{position:static;height:auto;max-height:none}.grid2{grid-template-columns:1fr}main{padding:14px}}
 table{border-collapse:collapse;width:100%;font-size:13px}
@@ -214,8 +224,10 @@ pre{padding:12px;overflow:auto;font-size:12px;max-height:420px}
 .badge.mid{background:#fef9c3;color:#854d0e}[data-theme="dark-plus"] .badge.mid,[data-theme="dark"] .badge.mid{background:#713f12;color:#fef9c3}
 .badge.lo{background:#fee2e2;color:#991b1b}[data-theme="dark-plus"] .badge.lo,[data-theme="dark"] .badge.lo{background:#7f1d1d;color:#fecaca}
 .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
-.page{display:none;animation:hx-rise .22s ease}.page.active{display:block}
-@keyframes hx-rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.page{display:none;opacity:0}.page.active{display:block;animation:ocm-page-in .24s var(--ease-out) forwards}
+@keyframes ocm-page-in{from{opacity:0}to{opacity:1}}
+@media(prefers-reduced-motion:reduce){.page.active{animation:ocm-page-in .2s ease forwards}}
+.log-scroll{max-height:min(70vh,720px);overflow-y:auto;min-height:140px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
 .logrow{display:grid;grid-template-columns:170px 70px 150px 1fr;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line);font-size:12.5px;align-items:baseline}
 .logrow .lv{font-weight:800}.lv.info{color:var(--accent)}.lv.warn{color:var(--warn)}.lv.error{color:var(--bad)}
 .seg{display:flex;gap:6px;flex-wrap:wrap}
@@ -250,10 +262,11 @@ input.sw:checked::after{transform:translateX(18px)}
 .form{display:grid;grid-template-columns:180px 1fr;gap:8px 12px;align-items:center;margin:10px 0}
 .form label{color:var(--muted);font-size:13px}
 .hint{color:var(--muted);font-size:12px}
-.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:20px;opacity:0;visibility:hidden;transition:opacity .2s ease,visibility .2s ease;z-index:50}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.38);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:20px;opacity:0;visibility:hidden;transition:opacity .22s var(--ease-out),visibility .22s var(--ease-out);z-index:50}
 .modal.open{opacity:1;visibility:visible}
-.modal .box{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);max-width:760px;width:100%;padding:18px;max-height:86vh;overflow:auto;transform:translateY(6px) scale(.985);transition:transform .2s ease}
-.modal.open .box{transform:none}
+.modal .box{background:var(--glass);backdrop-filter:blur(24px) saturate(180%);-webkit-backdrop-filter:blur(24px) saturate(180%);border:1px solid var(--glass-edge);border-radius:14px;max-width:760px;width:100%;padding:20px;max-height:86vh;overflow:auto;box-shadow:var(--shadow-md);transform:translateY(10px) scale(.96);transition:transform .32s var(--ease-settle),opacity .22s var(--ease-out);opacity:.98}
+.modal.open .box{transform:none;opacity:1}
+@media(prefers-reduced-motion:reduce){.modal .box{transform:none;transition:opacity .2s ease}.modal.open .box{opacity:1}}
 .kv{display:grid;grid-template-columns:170px 1fr;gap:6px 10px;font-size:13px;margin:8px 0}
 .kv dt{color:var(--muted)}.kv dd{margin:0}
 .prov-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px;display:flex;flex-direction:column;gap:8px}
@@ -267,9 +280,9 @@ input.sw:checked::after{transform:translateX(18px)}
 .field-tag.opt{background:var(--chip);color:var(--muted)}
 .prov-detail-head{display:flex;align-items:flex-start;gap:14px;margin-bottom:12px}
 .prov-detail-head img{width:36px;height:36px}
-.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
-.login-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:28px 26px;width:100%;max-width:400px}
-.login-card h1{margin:0 0 6px;font-size:22px}
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:radial-gradient(120% 80% at 50% 0%,color-mix(in srgb,var(--accent) 8%,transparent),transparent 55%),var(--bg)}
+.login-card{background:var(--glass);backdrop-filter:blur(24px) saturate(180%);-webkit-backdrop-filter:blur(24px) saturate(180%);border:1px solid var(--glass-edge);border-radius:16px;padding:28px 26px;width:100%;max-width:400px;box-shadow:var(--shadow-md)}
+.login-card h1{margin:0 0 6px;font-size:1.45rem;line-height:1.12;letter-spacing:-.022em;font-weight:700}
 .login-card .sub{margin:0 0 22px;color:var(--muted);font-size:13px}
 .login-card label{display:block;font-size:13px;color:var(--muted);margin:12px 0 6px}
 .login-card input{width:100%;padding:10px 12px}
@@ -374,7 +387,10 @@ ${WEBUI_FONTS}
 <div class="card"><h4>Recent sessions</h4><div id="dashSessions">loading…</div></div>
 <div class="card"><h4>Agent ranking</h4><div id="dashScores">loading…</div></div>
 </div>
+<div class="grid2">
 <div class="card"><h4>Status</h4><pre id="statusPre">loading…</pre></div>
+<div class="card"><div class="toolbar" style="margin-bottom:10px"><h4 style="margin:0">Recent logs</h4><span class="spacer"></span><button class="btn" type="button" id="dashLogsMore">Open Logs →</button></div><div id="dashLogs" class="log-scroll"><p class="hint">loading…</p></div></div>
+</div>
 </section>
 
 <!-- TASKS -->
@@ -447,19 +463,20 @@ ${WEBUI_FONTS}
 <button class="btn" id="logReload">↻</button>
 <button class="btn" id="logClear">clear</button>
 </div>
-<div id="logList"></div>
+<div id="logList" class="log-scroll"></div>
 </div>
 </section>
 
 <!-- PLAYGROUND -->
 <section class="page" id="page-playground">
 <div class="card">
-<p class="hint">Test the MCP tools live against the OpenCode server. <b>assign_task</b> defaults to fire-and-forget (wait=false) so the UI never hangs; tick <i>wait</i> for a blocking run.</p>
+<p class="hint">Test the MCP tools live against the OpenCode server.</p>
 <div class="tabs" id="pgTabs">
 <button data-tool="assign_task" class="active">assign_task</button>
-<button data-tool="models_list">models_list</button>
-<button data-tool="score_to_agent">score_to_agent</button>
-<button data-tool="fetch_session">fetch_session</button>
+<button data-tool="providers">providers</button>
+<button data-tool="model">model</button>
+<button data-tool="score">score</button>
+<button data-tool="sessions">sessions</button>
 </div>
 <div id="pgForm"></div>
 <div class="toolbar"><button class="btn primary" id="pgRun">▶ Run</button><span class="hint" id="pgHint"></span></div>
@@ -552,7 +569,10 @@ function scoreBadge(s){if(s==null)return '—';const c=s>=90?'hi':s>=70?'hi':s>=
 function applyTheme(){const th=state.settings?.theme||'dark-plus';const known=['light','dark','dark-plus','dracula','nord','solarized-light','solarized-dark','github-light','github-dark','monokai','tokyo-night'];let eff=th;if(th==='system'){eff=matchMedia('(prefers-color-scheme: dark)').matches?'dark-plus':'light'}if(!known.includes(eff))eff='dark-plus';document.documentElement.dataset.theme=eff;document.body.dataset.density=state.settings?.density||'comfortable';const meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.setAttribute('content',eff==='light'?'#f8fafc':'#252525');const btn=$('themeBtn');if(btn){const t=[...btn.childNodes].find(n=>n.nodeType===3);if(t)t.textContent=' '+eff}}
 function clientLog(level,msg){fetch('/api/logs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({level,message:String(msg).slice(0,500)})}).catch(()=>{})}
 function pageTitle(btn){return btn?.dataset?.label||btn?.textContent?.trim()||'Dashboard'}
-function goPage(page,label){state.page=page;document.querySelectorAll('#nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===page));document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id==='page-'+page));$('title').textContent=label||pageTitle(document.querySelector('#nav button[data-page="'+page+'"]'));$('backBtn').style.display='none';load()}
+function activeLogLevel(){const b=document.querySelector('#logSeg button.active');return b?.dataset?.lv||state.logLevel||'all'}
+function syncLogFilterUi(){const lv=state.logLevel||'all';document.querySelectorAll('#logSeg button').forEach(x=>x.classList.toggle('active',x.dataset.lv===lv))}
+function renderLogRowsHtml(rows){return(rows||[]).slice().reverse().map(l=>'<div class="logrow"><span class="hint">'+fmtDT(l.ts)+'</span><span class="lv '+l.level+'">'+l.level+'</span><span class="hint">'+l.source+'</span><span>'+String(l.message).replace(/</g,'&lt;')+'</span></div>').join('')||'<p class="hint">no logs yet — MCP tool calls and dashboard actions appear here</p>'}
+function goPage(page,label){state.page=page;if(page==='logs'){state.logLevel=state.settings?.logsLevel||state.logLevel||'all';syncLogFilterUi()}document.querySelectorAll('#nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===page));document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id==='page-'+page));$('title').textContent=label||pageTitle(document.querySelector('#nav button[data-page="'+page+'"]'));$('backBtn').style.display='none';load()}
 function initials(name){const p=String(name||'?').trim().split(/\\s+/);return ((p[0]?.[0]||'?')+(p[1]?.[0]||'')).toUpperCase().slice(0,2)}
 function syncUserFoot(me,st){const u=me?.user;if(!u)return;$('sideName').textContent=u.username||'User';$('sideAvatar').textContent=initials(u.username);$('sideSub').textContent='api '+(st?.ports?.api??'?')+' • webui '+(st?.ports?.webui??'?')}
 try{const collapsed=localStorage.getItem('ocmcp-sidebar')==='1';if(collapsed)$('appShell').classList.add('sidebar-collapsed')}catch{}
@@ -565,8 +585,9 @@ $('backBtn').addEventListener('click',()=>goPage('dashboard','Dashboard'));
 // dashboard
 async function loadDashboard(){const lim=state.settings?.sessionsLimit||20;
 try{
-const [st,se,sc]=await Promise.all([j('/api/status'),j('/api/sessions?limit='+lim),j('/api/scores')]);
+const [st,se,sc,lg]=await Promise.all([j('/api/status'),j('/api/sessions?limit='+lim),j('/api/scores'),j('/api/logs?level=all&limit=25')]);
 $('statusPre').textContent=JSON.stringify(st,null,2);
+if($('dashLogs'))$('dashLogs').innerHTML=renderLogRowsHtml(lg.logs||[]);
 const ok=!!st.ok;$('healthDot').className='dot '+(ok?'ok':'bad');$('healthTxt').textContent=(st.baseUrl||'')+(ok?' • reachable':' • unreachable');
 const meFoot=await j('/api/auth/me').catch(()=>({}));syncUserFoot(meFoot,st);
 const sess=se.sessions||[];const rank=sc.ranking||[];
@@ -575,7 +596,7 @@ let tokens=0;try{tokens=sess.reduce((a,s)=>a+((s.tokens?.input||0)+(s.tokens?.ou
 const best=rank[0];const avg=rank.length?(rank.reduce((a,r)=>a+r.average,0)/rank.length).toFixed(1):'—';
 $('statCards').innerHTML=['Sessions|'+sess.length,'Running|'+running,'Scores|'+(sc.count??rank.reduce((a,r)=>a+r.count,0)),'Best agent|'+(best?best.agent:'—'),'Avg score|'+avg,'Tokens (recent)|'+Number(tokens).toLocaleString()].map(x=>{const[a,b]=x.split('|');return '<div class="card"><h4>'+a+'</h4><div class="v">'+b+'</div></div>'}).join('');
 $('dashSessions').innerHTML=sess.length?'<table><tr><th>session</th><th>agent</th><th>model</th><th>state</th></tr>'+sess.slice(0,8).map(s=>'<tr><td><code>'+String(s.id||'').slice(0,14)+'…</code></td><td>'+(s.agent||'—')+'</td><td>'+(s.model||'—')+'</td><td>'+(s.running?'▶ running':(s.outcome||'—'))+'</td></tr>').join('')+'</table>':'<span class="hint">no sessions</span>';
-$('dashScores').innerHTML=rank.length?'<table><tr><th>agent</th><th>n</th><th>avg</th><th>last</th></tr>'+rank.slice(0,8).map(r=>'<tr><td>'+r.agent+'</td><td>'+r.count+'</td><td>'+r.average+'</td><td>'+r.last+'</td></tr>').join('')+'</table>':'<span class="hint">no scores yet — use Playground → score_to_agent</span>';
+$('dashScores').innerHTML=rank.length?'<table><tr><th>agent</th><th>n</th><th>avg</th><th>last</th></tr>'+rank.slice(0,8).map(r=>'<tr><td>'+r.agent+'</td><td>'+r.count+'</td><td>'+r.average+'</td><td>'+r.last+'</td></tr>').join('')+'</table>':'<span class="hint">no scores yet — use Playground → score</span>';
 }catch(e){$('statusPre').textContent='error: '+e;clientLog('error','dashboard load: '+e)}
 }
 // tasks
@@ -656,31 +677,32 @@ $('statsDist').innerHTML='<div style="display:flex;flex-direction:column;gap:6px
 }catch(e){$('statsCards').innerHTML='<div class="card"><h4>Error</h4><div class="v">'+e+'</div></div>';clientLog('error','stats load: '+e)}
 }
 // logs
-async function loadLogs(){const lv=state.logLevel;const q=$('logSearch').value.trim();
+async function loadLogs(){const lv=activeLogLevel();state.logLevel=lv;const q=$('logSearch').value.trim();
 try{const d=await j('/api/logs?level='+lv+'&limit=200'+(q?'&q='+encodeURIComponent(q):''));const rows=d.logs||[];
-$('logList').innerHTML=rows.slice().reverse().map(l=>'<div class="logrow"><span class="hint">'+fmtDT(l.ts)+'</span><span class="lv '+l.level+'">'+l.level+'</span><span class="hint">'+l.source+'</span><span>'+String(l.message).replace(/</g,'&lt;')+'</span></div>').join('')||'<p class="hint">no logs</p>';
-}catch(e){$('logList').innerHTML='error: '+e}
+$('logList').innerHTML=renderLogRowsHtml(rows);
+}catch(e){$('logList').innerHTML='<p class="hint">error: '+esc(e)+'</p>'}
 }
-$('logSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;state.logLevel=b.dataset.lv;document.querySelectorAll('#logSeg button').forEach(x=>x.classList.toggle('active',x===b));loadLogs()});
+$('logSeg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;state.logLevel=b.dataset.lv;syncLogFilterUi();loadLogs()});
 // playground
-const PG_FIELDS={assign_task:[['task','textarea','Add pagination to src/api/users.ts…'],['sessionID','text','ses_… (optional)'],['title','text','pagination'],['orchester','text','build'],['provider','text','opencode-go'],['model','text','gpt-6-luna (or provider/model)'],['variant','text','high'],['directory','text',''],['delivery','select:steer|queue','steer'],['wait','select:false|true','false'],['timeoutMs','number','180000']],models_list:[['provider','text',''],['search','text','luna'],['enabledOnly','select:false|true','false'],['detail','select:brief|full','brief'],['limit','number','20']],score_to_agent:[['orchester','text','build'],['score','number','92'],['sessionID','text','ses_…'],['provider','text','opencode-go'],['model','text','gpt-6-luna (or provider/model)'],['durationMs','number','45000'],['task','text','pagination'],['feedback','text','clean diff, tests added']],fetch_session:[['sessionID','text','(omit to list)'],['limit','number','20'],['order','select:asc|desc','asc'],['includeMessages','select:true|false','true'],['runningOnly','select:false|true','false']]};
+const PG_FIELDS={assign_task:[['prompt','textarea','Reply with PONG…'],['provider','text','opencode-go'],['modelId','text','gpt-6-luna'],['title','text','playground'],['harness','text','build'],['directories','text',''],['filePaths','text','path1,path2']],providers:[],model:[['provider','text','opencode-go'],['model','text','luna'],['onlyFreeModels','select:false|true','false']],score:[['sessionId','text','ses_…'],['score','number','9']],sessions:[['fromDate','text','YYYY-MM-DDTHH-MM-SS'],['toDate','text',''],['provider','text',''],['modelId','text',''],['harness','text',''],['limit','number','16']]};
 function renderPgForm(){const fs=PG_FIELDS[state.pgTool];$('pgForm').innerHTML='<div class="form">'+fs.map(f=>{const[k,t,d]=f;let inp;if(t==='textarea')inp='<textarea id="pg_'+k+'" rows="3" placeholder="'+d+'"></textarea>';else if(t.startsWith('select:')){const opts=t.slice(7).split('|');inp='<select id="pg_'+k+'">'+opts.map(o=>'<option'+(o===d?' selected':'')+'>'+o+'</option>').join('')+'</select>'}else inp='<input id="pg_'+k+'" type="'+t+'" placeholder="'+d+'"/>';return '<label>'+k+'</label>'+inp}).join('')+'</div>'}
 $('pgTabs').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;state.pgTool=b.dataset.tool;document.querySelectorAll('#pgTabs button').forEach(x=>x.classList.toggle('active',x===b));renderPgForm();$('pgOut').textContent='— run a tool to see output —'});
 async function pgRun(){const fs=PG_FIELDS[state.pgTool];const body={};for(const[k,t]of fs){const el=$('pg_'+k);let v=el?el.value:'';if(v==='')continue;if(t==='number')v=Number(v);if(v==='true')v=true;if(v==='false')v=false;body[k]=v}
 $('pgHint').textContent='running…';$('pgOut').textContent='running '+state.pgTool+'…';
-try{const d=await j('/api/playground/'+state.pgTool,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});$('pgOut').textContent=JSON.stringify(d,null,2).slice(0,20000);$('pgHint').textContent='done';clientLog(d&&d.error?'error':'info','playground '+state.pgTool+': '+(d.error||'ok'));if(state.pgTool==='score_to_agent'&&!d.error)loadTasks()}catch(e){$('pgOut').textContent='error: '+e;$('pgHint').textContent='failed';clientLog('error','playground '+state.pgTool+': '+e)}}
+try{const d=await j('/api/playground/'+state.pgTool,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});$('pgOut').textContent=JSON.stringify(d,null,2).slice(0,20000);$('pgHint').textContent='done';clientLog(d&&d.error?'error':'info','playground '+state.pgTool+': '+(d.error||'ok'));if(state.pgTool==='score'&&!d.error)loadTasks()}catch(e){$('pgOut').textContent='error: '+e;$('pgHint').textContent='failed';clientLog('error','playground '+state.pgTool+': '+e)}}
 $('pgRun').onclick=pgRun;
 // settings tabs
 function showSetTab(tab){state.setTab=tab;document.querySelectorAll('#setTabs button').forEach(x=>x.classList.toggle('active',x.dataset.tab===tab));['Profile','Appearance','Behaviour','Feedback','About','App'].forEach(name=>{const el=$('setTab'+name);if(el)el.style.display=name.toLowerCase()===tab?'block':'none'})}
 $('setTabs').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;showSetTab(b.dataset.tab)});
 // settings
-async function loadSettingsUI(){try{const [s,st,me]=await Promise.all([j('/api/settings'),j('/api/status'),j('/api/auth/me')]);state.settings=s.settings||s;$('setTheme').value=state.settings.theme;$('setDensity').value=state.settings.density;$('setLogsLevel').value=state.settings.logsLevel||'all';$('setRefresh').value=state.settings.refreshMs;$('setLimit').value=state.settings.sessionsLimit;$('setApiPort').value=(s.ports||st.ports||{}).api??st.ports?.api??'';$('setWebuiPort').value=(s.ports||st.ports||{}).webui??st.ports?.webui??'';$('setBaseUrl').value=st.baseUrl||'';$('setDir').value=st.directory||'';$('setDb').value=st.dbPath||'';if(me.user){$('profUser').value=me.user.username||'';$('profEmail').value=me.user.email||'';syncUserFoot(me,st)}state.logLevel=state.settings.logsLevel||'all';applyTheme();armTimer()}catch(e){$('setMsg').textContent='load failed: '+e}}
+async function loadSettingsUI(){try{const [s,st,me]=await Promise.all([j('/api/settings'),j('/api/status'),j('/api/auth/me')]);state.settings=s.settings||s;$('setTheme').value=state.settings.theme;$('setDensity').value=state.settings.density;$('setLogsLevel').value=state.settings.logsLevel||'all';$('setRefresh').value=state.settings.refreshMs;$('setLimit').value=state.settings.sessionsLimit;$('setApiPort').value=(s.ports||st.ports||{}).api??st.ports?.api??'';$('setWebuiPort').value=(s.ports||st.ports||{}).webui??st.ports?.webui??'';$('setBaseUrl').value=st.baseUrl||'';$('setDir').value=st.directory||'';$('setDb').value=st.dbPath||'';if(me.user){$('profUser').value=me.user.username||'';$('profEmail').value=me.user.email||'';syncUserFoot(me,st)}if(state.page==='logs'){state.logLevel=state.settings.logsLevel||'all';syncLogFilterUi()}applyTheme();armTimer()}catch(e){$('setMsg').textContent='load failed: '+e}}
 $('setFeedbackSend').onclick=async()=>{const msg=($('setFeedback').value||'').trim();if(!msg){$('setFeedbackMsg').textContent='Enter a message first';return}$('setFeedbackMsg').textContent='sending…';try{await j('/api/logs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({level:'info',message:'feedback: '+msg})});$('setFeedback').value='';$('setFeedbackMsg').textContent='Thanks — logged ✓'}catch(e){$('setFeedbackMsg').textContent='error: '+e}};
 $('profLogout').onclick=async()=>{try{await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'});location.href='/login'}catch(e){$('profMsg').textContent='error: '+e}};
 $('setSave').onclick=async()=>{const body={theme:$('setTheme').value,density:$('setDensity').value,logsLevel:$('setLogsLevel').value,refreshMs:Number($('setRefresh').value),sessionsLimit:Number($('setLimit').value),apiPort:Number($('setApiPort').value)||undefined,webuiPort:Number($('setWebuiPort').value)||undefined};$('setMsg').textContent='saving…';try{const d=await j('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(d.error){$('setMsg').textContent='error: '+d.error}else{state.settings=d.settings;$('setMsg').textContent='saved ✓';applyTheme();armTimer();clientLog('info','settings saved')}}catch(e){$('setMsg').textContent='error: '+e}};
 $('themeBtn').onclick=()=>{const order=['light','dark','dark-plus','dracula','nord','solarized-light','solarized-dark','github-light','github-dark','monokai','tokyo-night'];const cur=document.documentElement.dataset.theme||'light';const next=order[(order.indexOf(cur)+1)%order.length];state.settings.theme=next;applyTheme();fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({theme:next})}).catch(()=>{});try{localStorage.setItem('ocmcp-theme',next)}catch{}};
 function armTimer(){if(state.timer)clearInterval(state.timer);const ms=state.settings?.refreshMs||0;if(ms>0)state.timer=setInterval(()=>{if(state.page==='dashboard')loadDashboard();if(state.page==='logs'&&$('logAuto').checked)loadLogs()},ms)}
-async function boot(){try{const s=await j('/api/settings');if(s.error==='unauthorized')return;state.settings=s.settings||s;try{const lt=localStorage.getItem('ocmcp-theme');if(lt&&state.settings)state.settings.theme=lt}catch{}}catch{state.settings={theme:'dark-plus',density:'comfortable',refreshMs:15000,sessionsLimit:20,logsLevel:'all'}}applyTheme();showSetTab('profile');renderPgForm();load();loadSettingsUI();armTimer();j('/api/auth/me').then(me=>{if(me.user){$('profUser').value=me.user.username||'';$('profEmail').value=me.user.email||'';syncUserFoot(me,{ports:{}})}})}
+async function boot(){try{const s=await j('/api/settings');if(s.error==='unauthorized')return;state.settings=s.settings||s;try{const lt=localStorage.getItem('ocmcp-theme');if(lt&&state.settings)state.settings.theme=lt}catch{}}catch{state.settings={theme:'dark-plus',density:'comfortable',refreshMs:15000,sessionsLimit:20,logsLevel:'all'}}applyTheme();showSetTab('profile');renderPgForm();if($('dashLogsMore'))$('dashLogsMore').onclick=()=>goPage('logs','Logs');await loadSettingsUI();routePageFromPath();load();armTimer();j('/api/auth/me').then(me=>{if(me.user){$('profUser').value=me.user.username||'';$('profEmail').value=me.user.email||'';syncUserFoot(me,{ports:{}})}})}
+function routePageFromPath(){const seg=(location.pathname||'/').replace(/^\\/+/,'').split('/')[0]||'';const labels={logs:'Logs',tasks:'Tasks',providers:'Providers',skill:'Skill',stats:'Stats',playground:'Playground',settings:'Settings'};if(labels[seg])goPage(seg,labels[seg])}
 async function load(){if(state.page==='dashboard')loadDashboard();if(state.page==='tasks')loadTasks();if(state.page==='providers')loadProviders();if(state.page==='skill')loadSkill();if(state.page==='stats')loadStats();if(state.page==='logs')loadLogs();if(state.page==='settings')loadSettingsUI()}
 $('refreshBtn').onclick=load;$('taskReload').onclick=loadTasks;$('provReload').onclick=loadProviders;$('logReload').onclick=loadLogs;
 $('taskSearch').addEventListener('input',loadTasks);$('provSearch').addEventListener('input',loadProviders);$('logSearch').addEventListener('input',loadLogs);$('taskLimit').addEventListener('change',loadTasks);
@@ -893,6 +915,18 @@ function webuiListenHost(): string {
   return host && host.length > 0 ? host : "127.0.0.1";
 }
 
+const DASHBOARD_SPA_PATHS = new Set([
+  "/",
+  "/index.html",
+  "/logs",
+  "/tasks",
+  "/providers",
+  "/skill",
+  "/stats",
+  "/playground",
+  "/settings",
+]);
+
 /** Start the dashboard HTTP server. Resolves when listening; never resolves on close. */
 export function startWebui(port: number): Promise<http.Server> {
   ensureDefaultUser();
@@ -965,7 +999,7 @@ export function startWebui(port: number): Promise<http.Server> {
         return;
       }
 
-      if ((req.method === "GET" && p === "/") || p === "/index.html") {
+      if (req.method === "GET" && DASHBOARD_SPA_PATHS.has(p)) {
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(PAGE);
         return;
@@ -1238,145 +1272,120 @@ export function startWebui(port: number): Promise<http.Server> {
         const cfg = loadConfig();
         try {
           const oc = await resolvedClient();
-          if (tool === "models_list") {
-            const [models, def] = await Promise.all([oc.models(), oc.defaultModel().catch(() => null)]);
-            const needle = String(body.search ?? "").toLowerCase();
-            const statsByModel = new Map(
-              aggregateModels(loadStore(cfg.scoresFile).records).map((s) => [s.model, s]),
-            );
-            let rows = models.map((m: any) => {
-              const id = `${m.providerID}/${m.id}`;
-              const st = statsByModel.get(id);
-              return {
-                id,
-                provider: m.providerID,
-                providerID: m.providerID,
-                model: m.id,
-                modelID: m.id,
-                context: m.limit?.context ?? null,
-                maxOutput: m.limit?.output ?? null,
-                tools: m.capabilities?.tools ?? null,
-                enabled: m.enabled !== false,
-                scoreCount: st?.count ?? 0,
-                averageScore: st?.averageScore ?? null,
-                lastScore: st?.lastScore ?? null,
-                avgTaskMs: st?.avgDurationMs ?? null,
-                avgTaskTime: st?.avgDurationMs ?? null,
-              };
-            });
-            if (body.provider) rows = rows.filter((r: any) => r.providerID === String(body.provider) || r.id.startsWith(String(body.provider) + "/"));
-            if (needle) rows = rows.filter((r: any) => r.id.toLowerCase().includes(needle));
-            if (body.enabledOnly === true) rows = rows.filter((r: any) => r.enabled);
-            const limit = Math.min(200, Math.max(1, Number(body.limit ?? 20) || 20));
-            pushLog("info", `playground models_list → ${rows.length} matched`, "playground");
-            json(res, 200, { default: def ? `${def.providerID}/${def.modelID ?? def.id}` : null, totalMatched: rows.length, models: rows.slice(0, limit) });
+          if (tool === "providers") {
+            pushLog("info", "playground providers", "playground");
+            json(res, 200, { provider: PROVIDERS.map((p) => p.id) });
             return;
           }
-          if (tool === "fetch_session") {
-            if (!body.sessionID) {
-              const list = await oc.listSessions({ limit: Math.min(200, Number(body.limit ?? 20) || 20), order: "desc" });
-              const active = Object.keys(await oc.activeSessions().catch(() => ({})));
-              pushLog("info", "playground fetch_session list", "playground");
-              json(res, 200, {
-                count: (list.data ?? []).length,
-                sessions: (list.data ?? []).map((s: any) => ({ ...compactSession(s), running: active.includes(s.id) })),
-              });
-              return;
-            }
-            const [session, active] = await Promise.all([oc.session(String(body.sessionID)), oc.activeSessions().catch(() => ({}))]);
-            const messages = (await oc.messages(String(body.sessionID), { order: body.order ?? "asc", limit: Math.min(200, Number(body.limit ?? 50) || 50) })).data ?? [];
-            pushLog("info", `playground fetch_session ${body.sessionID}`, "playground");
-            json(res, 200, {
-              session: compactSession(session),
-              running: Object.keys(active).includes(String(body.sessionID)),
-              messageCount: messages.length,
-              messages: body.includeMessages === false ? [] : renderTranscript(messages, { maxMessages: 200 }),
+          if (tool === "model") {
+            const rows = await listModelEntries(oc, cfg.scoresFile, {
+              provider: body.provider ? String(body.provider) : null,
+              model: body.model ? String(body.model) : null,
+              onlyFreeModels: body.onlyFreeModels === true,
             });
+            pushLog("info", `playground model → ${rows.length} matched`, "playground");
+            json(res, 200, { model: rows });
             return;
           }
-          if (tool === "score_to_agent") {
-            const orchester = (body.orchester ?? body.agent)?.toString().trim();
-            if (!orchester || body.score === undefined) {
-              json(res, 400, { error: "orchester and score (0-100) are required" });
-              return;
-            }
+          if (tool === "sessions") {
+            const limit = Math.min(200, Math.max(1, Number(body.limit ?? 16) || 16));
+            const fetchN = Math.min(200, Math.max(limit * 4, 64));
+            const list = await oc.listSessions({ limit: fetchN, order: "desc" });
+            const sessionId = filterSessionIds(list.data ?? [], {
+              fromDate: body.fromDate ? String(body.fromDate) : null,
+              toDate: body.toDate ? String(body.toDate) : null,
+              provider: body.provider ? String(body.provider) : null,
+              modelId: body.modelId ? String(body.modelId) : null,
+              harness: body.harness ? String(body.harness) : null,
+              limit,
+            });
+            pushLog("info", `playground sessions → ${sessionId.length}`, "playground");
+            json(res, 200, { sessionId });
+            return;
+          }
+          if (tool === "score") {
+            const sessionId = String(body.sessionId ?? "").trim();
             const score = Number(body.score);
-            if (!Number.isFinite(score) || score < 0 || score > 100) {
-              json(res, 400, { error: "score must be 0-100" });
+            if (!sessionId || !Number.isFinite(score) || score < 0 || score > 10) {
+              json(res, 400, { error: "sessionId and score (0-10) are required" });
               return;
             }
-            const modelRaw = (body.modelID ?? body.model)?.toString().trim() || undefined;
-            const split = splitModelRef(modelRaw);
-            const result = recordScore(cfg.scoresFile, {
-              orchester,
-              agent: orchester,
-              score,
-              sessionID: body.sessionID ? String(body.sessionID) : undefined,
-              provider: body.provider ? String(body.provider) : (split.provider ?? undefined),
-              model: modelRaw,
-              task: body.task ? String(body.task) : undefined,
-              feedback: body.feedback ? String(body.feedback) : undefined,
-              ...(body.durationMs !== undefined && body.durationMs !== "" ? { durationMs: Number(body.durationMs) } : {}),
-            });
-            pushLog("info", `playground score ${orchester}=${score}`, "playground");
-            json(res, 200, { stored: true, record: result.record, agentStats: result.agentStats, ranking: result.ranking });
+            try {
+              const session = await oc.session(sessionId);
+              const orchester = (session?.agent ?? "unknown").toString();
+              const modelRaw = session?.model
+                ? `${session.model.providerID}/${session.model.id}`
+                : undefined;
+              recordScore(cfg.scoresFile, {
+                orchester,
+                agent: orchester,
+                score: score * 10,
+                sessionID: sessionId,
+                provider: session?.model?.providerID,
+                model: modelRaw,
+                task: session?.title ?? undefined,
+              });
+              json(res, 200, { result: "success" });
+            } catch {
+              json(res, 200, { result: "fail" });
+            }
             return;
           }
           if (tool === "assign_task") {
-            if (!body.task || !String(body.task).trim()) {
-              json(res, 400, { error: "task text is required" });
+            if (!body.prompt || !String(body.prompt).trim()) {
+              json(res, 400, { error: "prompt is required" });
               return;
             }
-            const directory = body.directory || cfg.directory;
-            const orchester = (body.orchester ?? body.agent)?.toString().trim() || undefined;
-            let sessionId = body.sessionID ? String(body.sessionID) : "";
-            let created = false;
-            if (sessionId) {
-              await oc.session(sessionId);
-              if (orchester) await oc.setAgent(sessionId, String(orchester));
-            } else {
-              const payload: Record<string, unknown> = { title: body.title, agent: orchester, directory };
-              const provider = body.provider?.toString().trim() || undefined;
-              const modelRaw = (body.modelID ?? body.model)?.toString().trim() || undefined;
-              if (provider && modelRaw) {
-                const bare = modelRaw.startsWith(provider + "/") ? modelRaw.slice(provider.length + 1) : modelRaw;
-                payload.model = { providerID: provider, id: bare, ...(body.variant ? { variant: String(body.variant) } : {}) };
-              } else if (modelRaw) {
-                const slash = modelRaw.indexOf("/");
-                if (slash > 0) {
-                  payload.model = {
-                    providerID: modelRaw.slice(0, slash),
-                    id: modelRaw.slice(slash + 1),
-                    ...(body.variant ? { variant: String(body.variant) } : {}),
-                  };
-                }
-              }
-              const session = await oc.createSession(payload as any);
-              sessionId = session.id;
-              created = true;
+            const directory = resolveDirectory(body.directories, cfg.directory);
+            const harness = body.harness?.toString().trim() || undefined;
+            const provider = body.provider?.toString().trim() || undefined;
+            const modelId = body.modelId?.toString().trim() || undefined;
+            let model: { providerID: string; id: string } | undefined;
+            if (provider && modelId) {
+              const bare = modelId.startsWith(provider + "/") ? modelId.slice(provider.length + 1) : modelId;
+              model = { providerID: provider, id: bare };
             }
-            const inbox = await oc.prompt(sessionId, { text: String(body.task), delivery: body.delivery === "queue" ? "queue" : "steer" });
-            const promptAt: number = inbox?.time?.created ?? Date.now();
-            pushLog("info", `playground assign_task → ${sessionId} (created=${created})`, "playground");
-            if (body.wait !== true) {
-              json(res, 200, { status: "dispatched", sessionID: sessionId, messageID: inbox?.id ?? null, sessionCreated: created, hint: "Poll with fetch_session or the Tasks page." });
-              return;
-            }
-            const wait = await waitForIdle(oc, sessionId, promptAt, {
-              timeoutMs: Math.min(300000, Math.max(5000, Number(body.timeoutMs ?? 60000) || 60000)),
+            const filePaths = body.filePaths
+              ? String(body.filePaths)
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean)
+              : [];
+            const session = await oc.createSession({
+              title: body.title,
+              agent: harness,
+              model,
               directory,
             });
+            const sessionId = session.id;
+            const inbox = await oc.prompt(sessionId, {
+              text: String(body.prompt),
+              files: filePaths.map((uri) => ({ uri })),
+              delivery: "steer",
+            });
+            const promptAt: number = inbox?.time?.created ?? Date.now();
+            const wait = await waitForIdle(oc, sessionId, promptAt, {
+              timeoutMs: 120_000,
+              directory,
+            });
+            if (wait.status !== "completed") {
+              json(res, 502, { error: `run ended with status ${wait.status}` });
+              return;
+            }
             const messages = (await oc.messages(sessionId, { order: "asc", limit: 200 })).data ?? [];
-            const session = wait.session ?? (await oc.session(sessionId));
+            let finishedMs = promptAt;
+            for (const m of messages) {
+              if (m?.type === "assistant" && (m?.time?.created ?? 0) >= promptAt && m?.time?.completed) {
+                finishedMs = Math.max(finishedMs, m.time.completed);
+              }
+            }
+            pushLog("info", `playground assign_task → ${sessionId}`, "playground");
             json(res, 200, {
-              status: wait.status,
-              sessionID: sessionId,
-              reply: collectReply(messages, promptAt),
-              toolCalls: countToolCalls(messages, promptAt),
-              cost: session?.cost ?? 0,
-              tokens: session?.tokens ?? {},
-              elapsedMs: wait.elapsedMs,
-              transcript: renderTranscript(messages, { since: promptAt, maxMessages: 40 }),
+              sessionId,
+              response: collectReply(messages, promptAt),
+              duration: wait.elapsedMs,
+              startedAt: formatCompactTimestamp(promptAt),
+              finishedAt: formatCompactTimestamp(finishedMs),
             });
             return;
           }

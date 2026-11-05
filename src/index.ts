@@ -3,10 +3,11 @@
  * opencode-mcp — expose an OpenCode agent to an orchestrator over MCP.
  *
  * Tools:
- *   assign_task    — hand a task to OpenCode (new or existing session), optionally wait
- *   models_list    — models the orchestrator can choose from
- *   score_to_agent — record a quality score for an agent's run, return the ranking
- *   fetch_session  — list sessions / read one session with its transcript
+ *   assign_task — run a prompt on OpenCode and return session timing + response
+ *   providers   — supported provider ids
+ *   model         — search models (modelId + free flag)
+ *   score       — score a session (0–10)
+ *   sessions    — list session ids with filters
  *
  * Environment:
  *   OPENCODE_URL           base URL of `opencode serve`   (default http://127.0.0.1:4096)
@@ -24,23 +25,19 @@ import { loadConfig } from "./config.js";
 import { loadDotenvFiles, syncGoAuthFromEnv } from "./go-api-key.js";
 import { resolveEndpoint } from "./bootstrap.js";
 import { OpenCode, OpenCodeError, parseModelRef, type ModelRef } from "./opencode.js";
-import { aggregateModels, loadStore, recordScore, splitModelRef } from "./scores.js";
+import { recordScore } from "./scores.js";
 import { PROVIDERS } from "./providers.js";
 import {
-  catalogFallbackRows,
-  enrichModelRow,
-  enterpriseConsoleUrl,
-  loadEnterpriseDoc,
-} from "./enterprise-catalog.js";
-import { GO_CONSOLE_URL, GO_DOCS_URL } from "./go-plan.js";
-import {
   collectReply,
-  compactSession,
-  countToolCalls,
-  deriveOutcome,
-  renderTranscript,
   waitForIdle,
 } from "./render.js";
+import { appendLog } from "./db.js";
+import {
+  filterSessionIds,
+  formatCompactTimestamp,
+  listModelEntries,
+  resolveDirectory,
+} from "./mcp-api.js";
 
 const cfg = loadConfig();
 syncGoAuthFromEnv();
@@ -100,9 +97,12 @@ function fail(err: unknown) {
   };
 }
 
-function resolvedOrchester(args: { orchester?: string; agent?: string }): string | undefined {
-  const v = (args.orchester ?? args.agent)?.trim();
-  return v ? v : undefined;
+function mcpLog(tool: string, message: string, level: "info" | "warn" | "error" = "info") {
+  try {
+    appendLog(level, message, `mcp:${tool}`);
+  } catch {
+    // Logging must never break stdio MCP.
+  }
 }
 
 function resolvedModel(args: {
@@ -150,189 +150,90 @@ server.registerTool(
   {
     title: "Assign task to OpenCode",
     description:
-      "Send a task to the OpenCode agent and (by default) wait until it finishes. " +
-      "Creates a new session unless sessionID is given, so the orchestrator can run " +
-      "several tasks in parallel by omitting sessionID each time. The model is chosen " +
-      "by the orchestrator: pass provider + model separately (e.g. provider " +
-      "\"opencode-go\", model \"gpt-6-luna\"); a combined \"provider/model\" value in " +
-      "model is still accepted for compatibility. Returns the session id, the agent's " +
-      "final reply, tool-call count, token usage and cost. If the run needs a permission " +
-      "the server would ask a human for, the result comes back as status \"blocked\" " +
-      "with the pending request — reply to it or set autoApprove to answer such " +
-      "requests automatically.",
+      "Run a prompt on OpenCode with provider/model, optional harness and attachments. " +
+      "Blocks until the run finishes and returns sessionId, response text, duration (ms), " +
+      "startedAt and finishedAt (YYYY-MM-DDTHH-MM-SS).",
     inputSchema: {
-      task: z
-        .string()
-        .min(1)
-        .describe("The instruction for the OpenCode agent. Plain text; be explicit about the goal and the done-criteria."),
-      sessionID: z
-        .string()
+      prompt: z.string().min(1).describe("Task instruction for the OpenCode agent."),
+      provider: z.string().optional().describe("Model provider, e.g. opencode-go."),
+      modelId: z.string().optional().describe("Bare model id; pairs with provider."),
+      title: z.string().max(200).optional().describe("Title for a new session."),
+      harness: z.string().optional().describe("Orchester agent id, e.g. build, plan, explore."),
+      directories: z
+        .union([z.string(), z.array(z.string())])
         .optional()
-        .describe("Continue an existing session (ses_…). Omit to start a fresh session for this task."),
-      title: z.string().max(200).optional().describe("Title for a newly created session."),
-      orchester: z
-        .string()
-        .optional()
-        .describe("Orchester agent id, e.g. \"build\", \"plan\", \"explore\" (see /api/agent). Omit to use the session default."),
-      agent: z
-        .string()
-        .optional()
-        .describe("Deprecated alias of orchester. Prefer orchester."),
-      provider: z
-        .string()
-        .optional()
-        .describe("Model provider, e.g. \"opencode-go\", \"opencode\", \"openrouter\". Pairs with model."),
-      model: z
-        .string()
-        .optional()
-        .describe("Model id. Use the bare id together with provider (e.g. model \"gpt-6-luna\"); a combined \"provider/model\" value is also accepted when provider is omitted."),
-      modelID: z
-        .string()
-        .optional()
-        .describe("Alias of model when provider is given separately."),
-      variant: z
-        .string()
-        .optional()
-        .describe("Optional model variant / effort tier, e.g. \"low\", \"medium\", \"high\", \"xhigh\"."),
-      directory: z
-        .string()
-        .optional()
-        .describe("Project directory the task runs in. Defaults to OPENCODE_DIRECTORY."),
-      files: z
-        .array(z.string())
-        .optional()
-        .describe("Files to attach to the prompt (absolute paths, relative paths or file:// URIs)."),
-      delivery: z
-        .enum(["steer", "queue"])
-        .optional()
-        .describe("What to do if the session is already busy: \"steer\" (default) injects into the running turn, \"queue\" waits for the next turn."),
-      autoApprove: z
-        .boolean()
-        .optional()
-        .describe("Answer pending permission requests with \"once\" so a headless run is not blocked. Default false (blocked result is returned instead)."),
-      wait: z
-        .boolean()
-        .optional()
-        .describe("Block until the run goes idle and return the reply (default true). Set false to fire-and-forget, then poll with fetch_session."),
-      timeoutMs: z
-        .number()
-        .int()
-        .min(1_000)
-        .max(900_000)
-        .optional()
-        .describe("How long to wait for completion in milliseconds (default 180000). On timeout the task keeps running server-side."),
+        .describe("Project directory or list of directories (first is used)."),
+      filePaths: z.array(z.string()).optional().describe("Files to attach to the prompt."),
     },
   },
   async (args) => {
     try {
-      const directory = args.directory ?? cfg.directory;
-      const orchester = resolvedOrchester(args as { orchester?: string; agent?: string });
-      const model = resolvedModel(args as { provider?: string; model?: string; modelID?: string; variant?: string });
-      let sessionId: string;
-      let created = false;
+      mcpLog("assign_task", `prompt=${String(args.prompt).slice(0, 160)}`);
+      const directory = resolveDirectory(args.directories, cfg.directory);
+      const orchester = args.harness?.trim() || undefined;
+      const model = resolvedModel({
+        provider: args.provider,
+        model: args.modelId,
+        modelID: args.modelId,
+      });
 
-      if (args.sessionID) {
-        sessionId = args.sessionID;
-        await oc.session(sessionId); // validates the id, 404s early
-        if (orchester) await oc.setAgent(sessionId, orchester);
-        if (model) await oc.setModel(sessionId, model);
-      } else {
-        const session = await oc.createSession({
-          title: args.title,
-          agent: orchester,
-          model,
-          directory,
-        });
-        sessionId = session.id;
-        created = true;
-      }
-
-      const files = (args.files ?? []).map((uri) => ({ uri }));
+      const session = await oc.createSession({
+        title: args.title,
+        agent: orchester,
+        model,
+        directory,
+      });
+      const sessionId = session.id;
+      const files = (args.filePaths ?? []).map((uri) => ({ uri }));
 
       let inbox: any;
       try {
-        inbox = await oc.prompt(sessionId, {
-          text: args.task,
-          files,
-          delivery: args.delivery,
-        });
+        inbox = await oc.prompt(sessionId, { text: args.prompt, files, delivery: "steer" });
       } catch (err) {
-        // 409 = the session is mid-turn and steer was not acceptable; retry as queue.
-        if (err instanceof OpenCodeError && err.status === 409 && !args.delivery) {
-          inbox = await oc.prompt(sessionId, { text: args.task, files, delivery: "queue" });
+        if (err instanceof OpenCodeError && err.status === 409) {
+          inbox = await oc.prompt(sessionId, { text: args.prompt, files, delivery: "queue" });
         } else {
           throw err;
         }
       }
 
       const promptAt: number = inbox?.time?.created ?? Date.now();
-      const modelFull = model ? `${model.providerID}/${model.id}${model.variant ? `@${model.variant}` : ""}` : null;
-      const base = {
-        sessionID: sessionId,
-        messageID: inbox?.id ?? null,
-        sessionCreated: created,
-        orchester: orchester ?? null,
-        agent: orchester ?? null,
-        provider: model?.providerID ?? null,
-        model: modelFull,
-        modelID: model?.id ?? null,
-        directory,
-      };
-
-      if (args.wait === false) {
-        return ok({ ...base, status: "dispatched", hint: "Poll with fetch_session(sessionID=…)." });
-      }
-
       const wait = await waitForIdle(oc, sessionId, promptAt, {
-        timeoutMs: args.timeoutMs ?? 180_000,
-        autoApprove: args.autoApprove,
+        timeoutMs: 180_000,
+        autoApprove: false,
         directory,
       });
+
+      if (wait.status !== "completed") {
+        return fail(
+          new Error(
+            wait.status === "blocked"
+              ? "Run blocked on a permission request."
+              : wait.status === "timeout"
+                ? "Run timed out before completion."
+                : `Run ended with status ${wait.status}.`,
+          ),
+        );
+      }
 
       const messages = (await oc.messages(sessionId, { order: "asc", limit: 500 })).data ?? [];
-      const reply = collectReply(messages, promptAt);
-      const session = wait.session ?? (await oc.session(sessionId));
-      const tokens = session?.tokens ?? {};
+      const response = collectReply(messages, promptAt);
+      let finishedMs = promptAt;
+      for (const m of messages) {
+        if (m?.type === "assistant" && (m?.time?.created ?? 0) >= promptAt && m?.time?.completed) {
+          finishedMs = Math.max(finishedMs, m.time.completed);
+        }
+      }
+      const sessionAfter = wait.session ?? (await oc.session(sessionId));
+      if (sessionAfter?.time?.updated) finishedMs = Math.max(finishedMs, sessionAfter.time.updated);
 
-      const result: Record<string, unknown> = {
-        ...base,
-        status: wait.status,
-        outcome: deriveOutcome(session, messages, wait.status === "timeout"),
-        title: session?.title ?? null,
-        sessionAgent: session?.agent ?? null,
-        sessionModel: session?.model
-          ? `${session.model.providerID}/${session.model.id}`
-          : null,
-        reply,
-        toolCalls: countToolCalls(messages, promptAt),
-        cost: session?.cost ?? 0,
-        tokens: {
-          input: tokens.input ?? 0,
-          output: tokens.output ?? 0,
-          reasoning: tokens.reasoning ?? 0,
-        },
-        elapsedMs: wait.elapsedMs,
-        autoApprovedPermissions: wait.approvedCount,
-        transcript: renderTranscript(messages, { since: promptAt, maxMessages: 60 }),
-        ...(wait.status === "blocked"
-          ? {
-              pendingPermission: wait.pendingPermission,
-              hint:
-                "The run paused on a permission request. Reply via " +
-                "POST /api/session/{sessionID}/permission/{requestID}/reply " +
-                "(decision: once|always|reject) or re-assign with autoApprove: true.",
-            }
-          : {}),
-        ...(wait.status === "timeout"
-          ? {
-              hint:
-                "Wait budget exhausted — the task is still running. " +
-                "Poll with fetch_session(sessionID=…) or stop it with POST /api/session/{sessionID}/interrupt.",
-            }
-          : {}),
-      };
-      fitArray(result, "transcript", "head", 3);
-      return ok(result);
+      return ok({
+        sessionId,
+        response,
+        duration: wait.elapsedMs,
+        startedAt: formatCompactTimestamp(promptAt),
+        finishedAt: formatCompactTimestamp(finishedMs),
+      });
     } catch (err) {
       return fail(err);
     }
@@ -340,77 +241,51 @@ server.registerTool(
 );
 
 // ---------------------------------------------------------------------------
-// models_list
+// providers
 // ---------------------------------------------------------------------------
 server.registerTool(
-  "models_list",
+  "providers",
   {
-    title: "List OpenCode models",
+    title: "List providers",
+    description: "Return supported LLM provider ids for assign_task and models.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      mcpLog("providers", "list");
+      return ok({ provider: PROVIDERS.map((p) => p.id) });
+    } catch (err) {
+      return fail(err);
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// model
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "model",
+  {
+    title: "List or search models",
     description:
-      "List the models the orchestrator can choose for assign_task, with everything " +
-      "needed to pick one: provider, provider/model id, context window, output limit, " +
-      "tool support, variants (effort tiers), price and availability, plus evidence " +
-      "from past runs — score count, average score and average time of doing a task. " +
-      "Flags the current server default. Filter with provider or search.",
+      "Return modelId and free flag. Optional provider filter, model substring search, " +
+      "and onlyFreeModels to hide paid models.",
     inputSchema: {
-      provider: z.string().optional().describe("Only models of this provider, e.g. \"opencode-go\", \"opencode\", \"openrouter\"."),
-      search: z.string().optional().describe("Case-insensitive substring match against id, name or family."),
-      enabledOnly: z.boolean().optional().describe("Hide models whose enabled flag is false (default false — show everything)."),
-      detail: z.enum(["brief", "full"]).optional().describe("\"brief\" (default) = ids + limits + scores; \"full\" adds price, capabilities and package info."),
-      limit: z.number().int().min(1).max(500).optional().describe("Maximum models returned (default 50; the response is trimmed to fit the MCP output budget)."),
+      provider: z.string().nullish().describe("Filter by provider id."),
+      model: z.string().nullish().describe("Case-insensitive search on model id or name."),
+      onlyFreeModels: z.boolean().nullish().describe("When true, return only free models."),
     },
   },
   async (args) => {
     try {
-      const doc = loadEnterpriseDoc();
-      const [models, def] = await Promise.all([oc.models(), oc.defaultModel()]);
-      const defaultKey = def ? `${def.providerID}/${def.modelID ?? def.id}` : null;
-      const needle = args.search?.toLowerCase();
-      const statsByModel = new Map(aggregateModels(loadStore(cfg.scoresFile).records).map((s) => [s.model, s]));
-
-      let rows: Record<string, unknown>[] = models.map((m: any) => {
-        const id = `${m.providerID}/${m.id}`;
-        return enrichModelRow(m, doc, {
-          defaultKey,
-          stats: statsByModel.get(id),
-          detail: args.detail,
-        });
+      mcpLog("model", `provider=${args.provider ?? "*"} search=${args.model ?? ""}`);
+      const rows = await listModelEntries(oc, cfg.scoresFile, {
+        provider: args.provider,
+        model: args.model,
+        onlyFreeModels: args.onlyFreeModels ?? false,
       });
-
-      if (args.provider && rows.length === 0 && doc) {
-        rows = catalogFallbackRows(String(args.provider), doc, {
-          defaultKey,
-          statsByModel,
-          detail: args.detail,
-        });
-      }
-
-      if (args.provider) rows = rows.filter((r) => r.providerID === args.provider);
-      if (needle)
-        rows = rows.filter((r) =>
-          [r.id, r.name ?? "", r.family ?? ""].some((v) => String(v).toLowerCase().includes(needle)),
-        );
-      if (args.enabledOnly) rows = rows.filter((r) => r.enabled);
-      rows.sort(
-        (a, b) =>
-          Number(b.isDefault) - Number(a.isDefault) ||
-          String(a.id).localeCompare(String(b.id)),
-      );
-
-      const limit = args.limit ?? 50;
-      const payload: Record<string, unknown> = {
-        totalMatched: rows.length,
-        returned: Math.min(rows.length, limit),
-        default: defaultKey,
-        directory: oc.directory,
-        enterpriseConsole: enterpriseConsoleUrl(doc) ?? GO_CONSOLE_URL,
-        goPlanDocs: GO_DOCS_URL,
-        catalogLoaded: Boolean(doc),
-        models: rows.slice(0, limit),
-      };
-      fitArray(payload, "models", "tail", 5);
-      payload.returned = (payload.models as unknown[]).length;
-      if (payload.truncated) payload.totalMatched = rows.length;
+      const payload: Record<string, unknown> = { model: rows };
+      fitArray(payload, "model", "tail", 5);
       return ok(payload);
     } catch (err) {
       return fail(err);
@@ -419,201 +294,71 @@ server.registerTool(
 );
 
 // ---------------------------------------------------------------------------
-// providers_list
+// score
 // ---------------------------------------------------------------------------
 server.registerTool(
-  "providers_list",
+  "score",
   {
-    title: "List supported providers",
-    description:
-      "Supported LLM providers (OpenCode Go, OpenCode Zen, OpenRouter, OpenAI-Compatible) with verified base URLs, key endpoints, the env var holding the API key, docs links and the transparent logo file. Use the provider id as the `provider` of assign_task (e.g. provider \"openrouter\" with an OpenRouter model).",
+    title: "Score a session",
+    description: "Record session quality on a 0–10 scale. Returns result success or fail.",
     inputSchema: {
-      search: z.string().optional().describe("Case-insensitive substring match against id, label or base URL."),
+      sessionId: z.string().min(1).describe("Session id (ses_…)."),
+      score: z.number().min(0).max(10).describe("Quality score 0–10."),
     },
   },
   async (args) => {
     try {
-      const needle = args.search?.toLowerCase();
-      let rows = PROVIDERS;
-      if (needle) {
-        rows = rows.filter((p) =>
-          [p.id, p.label, p.baseUrl].some((v) => String(v).toLowerCase().includes(needle)),
-        );
-      }
-      const doc = loadEnterpriseDoc();
-      return ok({
-        count: rows.length,
-        enterpriseConsole: enterpriseConsoleUrl(doc) ?? GO_CONSOLE_URL,
-        goPlanDocs: GO_DOCS_URL,
-        catalogLoaded: Boolean(doc),
-        providers: rows,
-      });
-    } catch (err) {
-      return fail(err);
-    }
-  },
-);
-
-// ---------------------------------------------------------------------------
-// score_to_agent
-// ---------------------------------------------------------------------------
-server.registerTool(
-  "score_to_agent",
-  {
-    title: "Score an agent run",
-    description:
-      "Record how well an OpenCode orchester handled a task (0 = failure, 100 = flawless) " +
-      "and get back the updated ranking across agents. The orchestrator should score " +
-      "after inspecting the result of assign_task / fetch_session, then use the returned " +
-      "ranking to decide which orchester (and provider/model) to assign to the next task. " +
-      "Scores are stored locally in a JSON file and survive restarts.",
-    inputSchema: {
-      orchester: z
-        .string()
-        .min(1)
-        .optional()
-        .describe("Orchester id or label being scored, e.g. \"build\", \"plan\", \"explore\", or \"opencode/build\"."),
-      agent: z
-        .string()
-        .min(1)
-        .optional()
-        .describe("Deprecated alias of orchester."),
-      score: z
-        .number()
-        .min(0)
-        .max(100)
-        .describe("Quality score 0–100. Suggested bands: 90+ correct & complete, 70–89 correct with gaps, 40–69 partial/needed rework, <40 failed."),
-      sessionID: z.string().optional().describe("Session the run happened in (ses_…). Used to fill in the task label and to verify the id."),
-      provider: z.string().optional().describe("Model provider used for the run, e.g. \"opencode-go\" — enables provider-level analysis."),
-      model: z.string().optional().describe("Model used for the run, \"provider/model\" or the bare id when provider is given — enables model-level analysis later."),
-      modelID: z.string().optional().describe("Alias of model when provider is given separately."),
-      durationMs: z.number().int().min(0).max(3_600_000).optional().describe("How long the task took in milliseconds (e.g. elapsedMs from assign_task). Feeds average task time in models_list."),
-      task: z.string().max(500).optional().describe("Short label for the task. Defaults to the session title when sessionID is given."),
-      feedback: z.string().max(2000).optional().describe("Why this score: what went well or wrong. Feeds future assignment decisions."),
-      includeRanking: z.boolean().optional().describe("Return the full per-agent ranking (default true)."),
-    },
-  },
-  async (args) => {
-    try {
-      const orchester = (args.orchester ?? args.agent)?.trim();
-      if (!orchester) {
-        return fail(new Error("orchester (or legacy agent) is required"));
-      }
-      let task = args.task;
-      if (args.sessionID) {
-        const session = await oc.session(args.sessionID); // verifies the id
-        if (!task && session?.title) task = session.title;
-      }
-      const modelRaw = (args.modelID ?? args.model)?.trim() || undefined;
-      const provider = args.provider?.trim() || splitModelRef(modelRaw).provider || undefined;
-      const result = recordScore(cfg.scoresFile, {
+      mcpLog("score", `session=${args.sessionId} score=${args.score}`);
+      const session = await oc.session(args.sessionId);
+      const orchester = (session?.agent ?? "unknown").toString();
+      const modelRaw = session?.model
+        ? `${session.model.providerID}/${session.model.id}`
+        : undefined;
+      const provider = session?.model?.providerID;
+      recordScore(cfg.scoresFile, {
         orchester,
         agent: orchester,
-        score: args.score,
-        sessionID: args.sessionID,
+        score: args.score * 10,
+        sessionID: args.sessionId,
         provider,
         model: modelRaw,
-        task,
-        feedback: args.feedback,
-        ...(typeof args.durationMs === "number" ? { durationMs: args.durationMs } : {}),
+        task: session?.title ?? undefined,
       });
-
-      const payload: Record<string, unknown> = {
-        stored: true,
-        file: cfg.scoresFile,
-        record: result.record,
-        agentStats: result.agentStats,
-        bestAgent: result.ranking[0]?.agent ?? null,
-      };
-      if (args.includeRanking !== false) payload.ranking = result.ranking;
-      return ok(payload);
+      return ok({ result: "success" });
     } catch (err) {
-      return fail(err);
+      mcpLog("score", String(err), "error");
+      return ok({ result: "fail" });
     }
   },
 );
 
 // ---------------------------------------------------------------------------
-// fetch_session
+// sessions
 // ---------------------------------------------------------------------------
 server.registerTool(
-  "fetch_session",
+  "sessions",
   {
-    title: "Fetch OpenCode session",
+    title: "List session ids",
     description:
-      "List recent OpenCode sessions (omit sessionID) or inspect one session in detail: " +
-      "status, agent, model, cost, tokens and a compact transcript of the conversation " +
-      "including tool calls. Use it to poll a task dispatched with wait:false, to check " +
-      "on a run that hit its timeout, or to review an agent's work before scoring it.",
+      "Return matching session ids. fromDate/toDate use YYYY-MM-DDTHH-MM-SS; filters may be null. " +
+      "Default limit 16.",
     inputSchema: {
-      sessionID: z.string().optional().describe("Session to read (ses_…). Omit to list sessions."),
-      limit: z.number().int().min(1).max(200).optional().describe("List: page size (default 20). Read: transcript messages kept (default 200 — the server caps a page at 200)."),
-      order: z.enum(["asc", "desc"]).optional().describe("Transcript order, default \"asc\" (oldest first)."),
-      includeMessages: z.boolean().optional().describe("Include the transcript when sessionID is given (default true)."),
-      includePermissions: z.boolean().optional().describe("Include pending permission requests for this session (default true)."),
-      runningOnly: z.boolean().optional().describe("List mode: only sessions that are currently running."),
+      fromDate: z.string().nullish().describe("Inclusive start (YYYY-MM-DDTHH-MM-SS)."),
+      toDate: z.string().nullish().describe("Inclusive end (YYYY-MM-DDTHH-MM-SS)."),
+      provider: z.string().nullish().describe("Filter by model provider."),
+      modelId: z.string().nullish().describe("Filter by model id or provider/model."),
+      harness: z.string().nullish().describe("Filter by orchester agent id."),
+      limit: z.number().int().min(1).max(200).optional().describe("Max ids returned (default 16)."),
     },
   },
   async (args) => {
     try {
-      if (!args.sessionID) {
-        const res = await oc.listSessions({ limit: args.limit ?? 20, order: "desc" });
-        const active = Object.keys(await oc.activeSessions());
-        let sessions = (res.data ?? []).map((s: any) => ({
-          ...compactSession(s),
-          running: active.includes(s.id),
-        }));
-        if (args.runningOnly) sessions = sessions.filter((s: any) => s.running);
-        const fetched = sessions.length;
-        const payload: Record<string, unknown> = {
-          count: fetched,
-          sessionsFetched: fetched,
-          running: active.length,
-          cursor: res.cursor ?? null,
-          sessions,
-        };
-        fitArray(payload, "sessions", "tail", 3);
-        payload.count = (payload.sessions as unknown[]).length;
-        return ok(payload);
-      }
-
-      const [session, active] = await Promise.all([
-        oc.session(args.sessionID),
-        oc.activeSessions(),
-      ]);
-
-      const payload: Record<string, unknown> = {
-        session: compactSession(session),
-        running: Object.keys(active).includes(args.sessionID),
-        directory: session?.location?.directory ?? oc.directory,
-      };
-
-      if (args.includeMessages !== false) {
-        const messages = (
-          await oc.messages(args.sessionID, {
-            order: args.order ?? "asc",
-            limit: args.limit ?? 200,
-          })
-        ).data ?? [];
-        payload.messages = renderTranscript(messages, { maxMessages: 300 });
-        payload.messageCount = messages.length;
-        (payload.session as Record<string, unknown>).outcome = deriveOutcome(
-          session,
-          messages,
-          payload.running === true,
-        );
-        fitArray(payload, "messages", "head", 2);
-        payload.messagesReturned = (payload.messages as unknown[]).length;
-      }
-
-      if (args.includePermissions !== false) {
-        const pending = (
-          await oc.permissionRequests(session?.location?.directory ?? oc.directory)
-        ).filter((p) => p?.sessionID === args.sessionID);
-        if (pending.length) payload.pendingPermissions = pending;
-      }
-
-      return ok(payload);
+      const limit = args.limit ?? 16;
+      mcpLog("sessions", `limit=${limit}`);
+      const fetchN = Math.min(200, Math.max(limit * 4, 64));
+      const res = await oc.listSessions({ limit: fetchN, order: "desc" });
+      const sessionId = filterSessionIds(res.data ?? [], { ...args, limit });
+      return ok({ sessionId });
     } catch (err) {
       return fail(err);
     }
