@@ -21,6 +21,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 import { loadConfig } from "./config.js";
+import { loadDotenvFiles, syncGoAuthFromEnv } from "./go-api-key.js";
 import { resolveEndpoint } from "./bootstrap.js";
 import { OpenCode, OpenCodeError, parseModelRef, type ModelRef } from "./opencode.js";
 import { aggregateModels, loadStore, recordScore, splitModelRef } from "./scores.js";
@@ -42,6 +43,7 @@ import {
 } from "./render.js";
 
 const cfg = loadConfig();
+syncGoAuthFromEnv();
 const endpoint = await resolveEndpoint(cfg);
 cfg.baseUrl = endpoint.baseUrl;
 cfg.password = endpoint.password;

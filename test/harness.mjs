@@ -20,7 +20,7 @@ if (!process.env.OPENCODE_URL || !process.env.OPENCODE_PASSWORD) {
   );
 }
 
-const FREE_MODEL = "opencode-go/longcat-2.5-preview-free";
+const FREE_MODEL = "opencode-go/gpt-6-luna";
 const results = [];
 let nextId = 1;
 let stderrBuffer = "";

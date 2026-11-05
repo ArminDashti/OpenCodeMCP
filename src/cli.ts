@@ -18,6 +18,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadConfig } from "./config.js";
+import { loadDotenvFiles, resolveOpencodeGoApiKey, syncGoAuthFromEnv } from "./go-api-key.js";
 import {
   readService,
   runServiceCommand,
@@ -146,6 +147,8 @@ function runServiceVerb(verb: "start" | "stop" | "restart"): void {
     stopServeFallback();
   }
   void (async () => {
+    loadDotenvFiles();
+    syncGoAuthFromEnv();
     if (verb === "start" && (await probe(cfg.baseUrl, cfg.password))) {
       console.log(`"opencode service" unavailable, but an OpenCode server is already running at ${cfg.baseUrl}`);
       console.log(`pid file: ${servePidFile()} (not managed — this server was started elsewhere)`);

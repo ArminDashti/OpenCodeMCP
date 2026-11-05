@@ -5,6 +5,7 @@ import { execFileSync, execSync, spawn } from "node:child_process";
 
 import { DEFAULT_API_PORT } from "./cli-config.js";
 import type { Config } from "./config.js";
+import { loadDotenvFiles, serveChildEnv } from "./go-api-key.js";
 
 /**
  * OpenCode v2 keeps its background server ("opencode service") credential in
@@ -97,10 +98,12 @@ function portFromBaseUrl(baseUrl: string): number {
  */
 export function startServeFallback(port: number): boolean {
   try {
+    loadDotenvFiles();
     const child = spawn(resolveOpencodeExecutable(), ["serve", "--port", String(port)], {
       detached: true,
       stdio: "ignore",
       windowsHide: true,
+      env: serveChildEnv(),
     });
     child.on("error", () => {
       /* surfaced through the readiness probe, not here */

@@ -153,7 +153,7 @@ export const PROVIDERS: ProviderInfo[] = [
       models: "https://opencode.ai/zen/go/v1/models",
     },
     envKey: "OPENCODE_GO_API_KEY",
-    envAliases: ["OPENCODE_API_KEY"],
+    envAliases: ["OPENCODE_API_KEY", "OPENCODE_GO_ARMIN_DOPAMINE_GMAIL_API_KEY", "OPENCODE_GO_DASHTI75_API_KEY"],
     docs: "https://opencode.ai/v2/docs/console/go",
     logo: "assets/providers/opencode-go.svg",
     logoSource: "lobe-icons opencode mark (transparent); official brand: https://opencode.ai/brand",

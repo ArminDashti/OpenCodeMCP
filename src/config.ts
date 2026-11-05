@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { DEFAULT_API_PORT, loadCliConfig } from "./cli-config.js";
+import { loadDotenvFiles } from "./go-api-key.js";
 
 /** Runtime configuration, resolved from the environment on every start. */
 export interface Config {
@@ -44,6 +45,7 @@ function defaultBaseUrl(): string {
 }
 
 export function loadConfig(): Config {
+  loadDotenvFiles();
   const baseUrl = (
     process.env.OPENCODE_URL ??
     process.env.OPENCODE_SERVER_URL ??
