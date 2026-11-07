@@ -28,6 +28,7 @@ coverage/
 *.7z
 graphify-out/
 .gitnexus/
+.opencode-mcp/
 !.env.example
 .agents/
 .cursor/mcp.json

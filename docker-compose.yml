@@ -50,9 +50,10 @@ services:
       OPENCODE_PASSWORD: ${OPENCODE_PASSWORD:-}
       OPENCODE_AUTOSTART: "0"
       OPENCODE_DIRECTORY: ${OPENCODE_DIRECTORY:-/workspace}
+      OPENCODE_MCP_DB: /root/.opencode-mcp/opencode-mcp.db
     volumes:
       - ${WORKSPACE_HOST:-.}:/workspace
-      - opencode-mcp-data:/root/.opencode-mcp
+      - ${WORKSPACE_HOST:-.}/.opencode-mcp:/root/.opencode-mcp
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:28479/login || exit 1"]
       interval: 15s
@@ -76,11 +77,11 @@ services:
       OPENCODE_PASSWORD: ${OPENCODE_PASSWORD:-}
       OPENCODE_AUTOSTART: "0"
       OPENCODE_DIRECTORY: ${OPENCODE_DIRECTORY:-/workspace}
+      OPENCODE_MCP_DB: /root/.opencode-mcp/opencode-mcp.db
     volumes:
       - ${WORKSPACE_HOST:-.}:/workspace
-      - opencode-mcp-data:/root/.opencode-mcp
+      - ${WORKSPACE_HOST:-.}/.opencode-mcp:/root/.opencode-mcp
 
 volumes:
-  opencode-mcp-data:
   opencode-config:
   opencode-data:
