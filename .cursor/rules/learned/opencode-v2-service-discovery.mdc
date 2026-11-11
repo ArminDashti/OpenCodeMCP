@@ -19,4 +19,6 @@ OpenCode 2.2.7 `opencode service start` writes `~/.config/opencode/service.json`
 
 **Gotchas:** Put the CLI on the default PATH. The installer writes `$HOME/.opencode/bin/opencode` and login shells do not load `~/.bashrc`. Install with `curl -fsSL https://opencode.ai/v2/install | bash -s -- --no-modify-path --version 2.2.7`, then `sudo ln -sfn "$HOME/.opencode/bin/opencode" /usr/local/bin/opencode`.
 
+**Passing check (2026-11-12, Asia/Tehran):** On OpenCode 2.2.7, `opencode service status` printed `http://127.0.0.1:49374`. `GET /api/info` with basic user `opencode` and the password from `service.json` returned HTTP 200 and `"version":"2.2.7"`. After `node dist/cli.js webui --port 28479` with `OPENCODE_URL` set to that URL, signed-in `GET /api/status` returned `ok: true`, `baseUrl: http://127.0.0.1:49374`, `source: OPENCODE_URL`. The same start script on a fresh agent produced login HTTP 200, the same status fields, and provider ids `openrouter`, `opencode`, `opencode-go`, `openai-compatible`. `node test/unit.mjs` passed 12/12.
+
 **What didn't work:** Reading `{port, password}` from `service.json` (2.2.7 has no port, so discovery returns null). Using the README default `http://127.0.0.1:4096` does not reach the background service.
