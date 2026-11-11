@@ -1,0 +1,24 @@
+---
+description: Reach the OpenCode v2 background service from opencodemcp. Use when starting opencode service, the dashboard, OPENCODE_URL, or service.json.
+alwaysApply: false
+---
+
+# OpenCode v2 service discovery
+
+OpenCode 2.2.7 `opencode service start` writes `~/.config/opencode/service.json` with `password` only. `readService()` in `src/bootstrap.ts` returns null unless that file has a numeric `port`, so the MCP never attaches to the background service and falls through to a detached `opencode serve` on port 4096.
+
+**Goal:** Point the dashboard and MCP at the live v2 background service.
+
+**Steps:**
+
+1. Run `opencode service start` (safe to repeat).
+2. Set `OPENCODE_URL` to the URL printed by `opencode service status` (Linux default is `http://127.0.0.1:49374`).
+3. Set `OPENCODE_PASSWORD` from the `password` field in `~/.config/opencode/service.json`. Do not print it.
+4. Probe `GET $OPENCODE_URL/api/info` with basic auth user `opencode` until HTTP 200.
+5. Start the dashboard with `WEBUI_OPEN_BROWSER=0` via `node dist/cli.js webui --port 28479`.
+
+**Gotchas:** Put the CLI on the default PATH. The installer writes `$HOME/.opencode/bin/opencode` and login shells do not load `~/.bashrc`. Install with `curl -fsSL https://opencode.ai/v2/install | bash -s -- --no-modify-path --version 2.2.7`, then `sudo ln -sfn "$HOME/.opencode/bin/opencode" /usr/local/bin/opencode`.
+
+**Passing check (2026-11-12, Asia/Tehran):** On OpenCode 2.2.7, `opencode service status` printed `http://127.0.0.1:49374`. `GET /api/info` with basic user `opencode` and the password from `service.json` returned HTTP 200 and `"version":"2.2.7"`. After `node dist/cli.js webui --port 28479` with `OPENCODE_URL` set to that URL, signed-in `GET /api/status` returned `ok: true`, `baseUrl: http://127.0.0.1:49374`, `source: OPENCODE_URL`. The same start script on a fresh agent produced login HTTP 200, the same status fields, and provider ids `openrouter`, `opencode`, `opencode-go`, `openai-compatible`. `node test/unit.mjs` passed 12/12.
+
+**What didn't work:** Reading `{port, password}` from `service.json` (2.2.7 has no port, so discovery returns null). Using the README default `http://127.0.0.1:4096` does not reach the background service.
