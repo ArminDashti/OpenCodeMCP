@@ -6,16 +6,18 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(here, "..", "dist");
+/** Absolute filesystem paths are not valid ESM import specifiers on Windows (c:). */
+const distImport = (name) => pathToFileURL(path.join(dist, name)).href;
 
 const { costIsFree, modelRowIsFree, filterSessionIds, parseCompactTimestamp } = await import(
-  path.join(dist, "mcp-api.js")
+  distImport("mcp-api.js"),
 );
-const { closeDb, openDb, allScores, insertScore, dedupeScores } = await import(path.join(dist, "db.js"));
-const { resolveOpencodeGoApiKey } = await import(path.join(dist, "go-api-key.js"));
+const { closeDb, openDb, allScores, insertScore, dedupeScores } = await import(distImport("db.js"));
+const { resolveOpencodeGoApiKey } = await import(distImport("go-api-key.js"));
 
 const results = [];
 function check(name, fn) {
