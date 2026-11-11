@@ -18,7 +18,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadConfig } from "./config.js";
-import { loadDotenvFiles, resolveOpencodeGoApiKey, syncGoAuthFromEnv } from "./go-api-key.js";
+import { loadDotenvFiles, syncGoAuthFromEnv } from "./go-api-key.js";
 import {
   readService,
   runServiceCommand,
@@ -131,36 +131,92 @@ async function serviceStatusText(): Promise<void> {
   if (!ok) process.exitCode = 1;
 }
 
-function runServiceVerb(verb: "start" | "stop" | "restart"): void {
-  if (runServiceCommand(verb)) return;
-  // Builds without `opencode service`: manage a detached `opencode serve` instead.
+async function waitUntilReady(
+  baseUrl: string,
+  password: string | undefined,
+  attempts = 40,
+  gapMs = 500,
+): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    if (await probe(baseUrl, password)) return true;
+    await new Promise((r) => setTimeout(r, gapMs));
+  }
+  return false;
+}
+
+async function runServiceVerb(verb: "start" | "stop" | "restart"): Promise<void> {
   const cfg = loadConfig();
   const port = Number(new URL(cfg.baseUrl).port) || DEFAULT_API_PORT;
+
   if (verb === "stop") {
+    if (runServiceCommand("stop")) {
+      console.log("stopped opencode service");
+      return;
+    }
     if (stopServeFallback()) {
       console.log(`stopped the detached opencode serve on port ${port}`);
       return;
     }
-    fail(`"opencode service ${verb}" failed and no detached serve was recorded in ${servePidFile()}`);
+    if (!(await probe(cfg.baseUrl, cfg.password))) {
+      console.log(
+        `already stopped — no pid file at ${servePidFile()} and ${cfg.baseUrl} is not reachable`,
+      );
+      return;
+    }
+    fail(
+      `"opencode service stop" failed: server still reachable at ${cfg.baseUrl} but no pid was recorded in ${servePidFile()}`,
+    );
   }
+
+  if (verb === "restart" && runServiceCommand("restart")) {
+    const svc = readService();
+    const url = svc ? `http://127.0.0.1:${svc.port}` : cfg.baseUrl;
+    if (await waitUntilReady(url, svc?.password ?? cfg.password)) {
+      console.log(`restarted opencode service → ${url}`);
+      return;
+    }
+    fail(`"opencode service restart" ran but server not reachable at ${url}`);
+  }
+
+  if (verb === "start" && runServiceCommand("start")) {
+    const svc = readService();
+    const url = svc ? `http://127.0.0.1:${svc.port}` : cfg.baseUrl;
+    if (await waitUntilReady(url, svc?.password ?? cfg.password)) {
+      console.log(`started opencode service → ${url}`);
+      return;
+    }
+    fail(`"opencode service start" ran but server not reachable at ${url}`);
+  }
+
+  // Builds without `opencode service`: manage a detached `opencode serve` instead.
   if (verb === "restart") {
     stopServeFallback();
   }
-  void (async () => {
-    loadDotenvFiles();
-    syncGoAuthFromEnv();
-    if (verb === "start" && (await probe(cfg.baseUrl, cfg.password))) {
-      console.log(`"opencode service" unavailable, but an OpenCode server is already running at ${cfg.baseUrl}`);
-      console.log(`pid file: ${servePidFile()} (not managed — this server was started elsewhere)`);
-      return;
-    }
-    if (startServeFallback(port)) {
-      console.log(`started a detached "opencode serve --port ${port}" ("opencode service" unavailable)`);
-      console.log(`pid recorded in ${servePidFile()}`);
-      return;
-    }
+
+  loadDotenvFiles();
+  syncGoAuthFromEnv();
+  if (verb === "start" && (await probe(cfg.baseUrl, cfg.password))) {
+    console.log(
+      `"opencode service" unavailable, but an OpenCode server is already running at ${cfg.baseUrl}`,
+    );
+    console.log(
+      `pid file: ${servePidFile()} (not managed — this server was started elsewhere)`,
+    );
+    return;
+  }
+  if (!startServeFallback(port)) {
     fail(`"opencode service ${verb}" failed (is opencode installed and on PATH?)`);
-  })();
+  }
+  if (await waitUntilReady(cfg.baseUrl, cfg.password)) {
+    console.log(
+      `started a detached "opencode serve --port ${port}" ("opencode service" unavailable)`,
+    );
+    console.log(`pid recorded in ${servePidFile()}`);
+    return;
+  }
+  fail(
+    `started "opencode serve --port ${port}" but it did not become reachable at ${cfg.baseUrl}`,
+  );
 }
 
 async function doctor(): Promise<void> {
@@ -191,14 +247,19 @@ async function doctor(): Promise<void> {
   const reachable = await probe(url, svc?.password ?? cfg.password);
 
   const hasServePid = fs.existsSync(servePidFile());
+  // service.json is optional on builds that only support `opencode serve`.
+  // A stale serve.pid alone must not pass this check.
   out.push({
     name: "service.json present",
-    ok: svc !== null || hasServePid || reachable,
+    ok: svc !== null || reachable,
     detail: svc
       ? `${svc.file} (port ${svc.port})`
       : reachable
-        ? `${serviceFilePath()} absent, but OpenCode is reachable at ${url}`
-        : `${serviceFilePath()} — run: opencodemcp service start`,
+        ? `${serviceFilePath()} absent, but OpenCode is reachable at ${url}` +
+          (hasServePid ? ` (serve.pid present)` : "")
+        : hasServePid
+          ? `${serviceFilePath()} absent; stale ${servePidFile()} present but server not reachable — run: opencodemcp service start`
+          : `${serviceFilePath()} — run: opencodemcp service start`,
   });
 
   out.push({
@@ -300,7 +361,7 @@ async function main(): Promise<void> {
     const verb = (rest[0] ?? "").toLowerCase();
     const json = rest.includes("--json");
     if (verb === "start" || verb === "stop" || verb === "restart") {
-      runServiceVerb(verb);
+      await runServiceVerb(verb);
       return;
     }
     if (verb === "status") {

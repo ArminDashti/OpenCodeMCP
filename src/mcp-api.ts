@@ -39,24 +39,41 @@ export function resolveDirectory(
   return fallback;
 }
 
-function costIsFree(cost: unknown): boolean {
-  if (!cost || typeof cost !== "object") return false;
+const COST_FIELDS = [
+  "input",
+  "output",
+  "prompt",
+  "completion",
+  "cache_read",
+  "cache_write",
+] as const;
+
+/**
+ * True only when cost has at least one explicit numeric field and every
+ * present field is 0. Empty `{}` / missing fields are unknown — not free.
+ */
+export function costIsFree(cost: unknown): boolean {
+  if (!cost || typeof cost !== "object" || Array.isArray(cost)) return false;
   const c = cost as Record<string, unknown>;
-  const nums = [
-    c.input,
-    c.output,
-    c.prompt,
-    c.completion,
-    c.cache_read,
-    c.cache_write,
-  ].map((v) => (v === undefined || v === null ? 0 : Number(v)));
+  const present = COST_FIELDS.map((k) => c[k]).filter((v) => v !== undefined && v !== null);
+  if (present.length === 0) return false;
+  const nums = present.map((v) => Number(v));
   if (nums.some((n) => !Number.isFinite(n))) return false;
   return nums.every((n) => n === 0);
+}
+
+/** Heuristic when providers omit cost: slug ends with `-free` / `_free`. */
+function modelIdLooksFree(modelId: string): boolean {
+  const bare = modelId.includes("/") ? modelId.split("/").slice(1).join("/") : modelId;
+  return /(?:^|[-_])free$/i.test(bare);
 }
 
 export function modelRowIsFree(row: Record<string, unknown>, apiModel?: any): boolean {
   if (costIsFree(row.cost)) return true;
   if (apiModel && costIsFree(apiModel.cost)) return true;
+  const id = String(row.id ?? `${row.providerID ?? ""}/${row.modelID ?? row.model ?? ""}`);
+  if (modelIdLooksFree(id)) return true;
+  if (apiModel?.id && modelIdLooksFree(String(apiModel.id))) return true;
   return false;
 }
 
@@ -126,9 +143,20 @@ export interface SessionFilterArgs {
   limit?: number | null;
 }
 
+function requireCompactTimestamp(label: string, raw: string | null | undefined): number | null {
+  if (raw == null || raw === "") return null;
+  const ms = parseCompactTimestamp(raw);
+  if (ms == null) {
+    throw new Error(
+      `Invalid ${label} "${raw}": expected YYYY-MM-DDTHH-MM-SS (or ISO-8601)`,
+    );
+  }
+  return ms;
+}
+
 export function filterSessionIds(sessions: any[], args: SessionFilterArgs): string[] {
-  const fromMs = parseCompactTimestamp(args.fromDate ?? undefined);
-  const toMs = parseCompactTimestamp(args.toDate ?? undefined);
+  const fromMs = requireCompactTimestamp("fromDate", args.fromDate);
+  const toMs = requireCompactTimestamp("toDate", args.toDate);
   const limit = args.limit ?? 16;
   const provider = args.provider?.trim() || null;
   const modelNeedle = args.modelId?.trim() || null;

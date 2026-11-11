@@ -81,8 +81,104 @@ function legacyScoresFile(): string {
   );
 }
 
+const SCORES_MIGRATED_SETTING = "scores_json_migrated";
+
+function scoreNaturalKey(row: {
+  ts: number;
+  agent: string;
+  score: number;
+  sessionID: string | null;
+  model: string | null;
+  task: string | null;
+  feedback: string | null;
+}): string {
+  return [
+    row.ts,
+    row.agent,
+    row.score,
+    row.sessionID ?? "",
+    row.model ?? "",
+    row.task ?? "",
+    row.feedback ?? "",
+  ].join("\u0001");
+}
+
+/** Remove duplicate score rows that share the same natural key (keep lowest id). */
+export function dedupeScores(database: DatabaseSync): number {
+  const rows = database
+    .prepare(
+      `SELECT id, ts, agent, score, sessionID, model, task, feedback
+       FROM scores ORDER BY id ASC`,
+    )
+    .all() as Array<{
+    id: number;
+    ts: number;
+    agent: string;
+    score: number;
+    sessionID: string | null;
+    model: string | null;
+    task: string | null;
+    feedback: string | null;
+  }>;
+  const seen = new Set<string>();
+  const toDelete: number[] = [];
+  for (const row of rows) {
+    const key = scoreNaturalKey(row);
+    if (seen.has(key)) toDelete.push(row.id);
+    else seen.add(key);
+  }
+  if (toDelete.length === 0) return 0;
+  const del = database.prepare("DELETE FROM scores WHERE id = ?");
+  for (const id of toDelete) del.run(id);
+  return toDelete.length;
+}
+
+function ensureScoresNaturalUniqueIndex(database: DatabaseSync): void {
+  database.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_scores_natural
+    ON scores(
+      ts,
+      agent,
+      score,
+      ifnull(sessionID, ''),
+      ifnull(model, ''),
+      ifnull(task, ''),
+      ifnull(feedback, '')
+    );
+  `);
+}
+
+function scoresFileFingerprint(file: string): string | null {
+  try {
+    const st = fs.statSync(file);
+    return `${path.resolve(file)}|${st.size}|${Math.trunc(st.mtimeMs)}`;
+  } catch {
+    return null;
+  }
+}
+
 function migrateScores(database: DatabaseSync): void {
+  const removed = dedupeScores(database);
+  if (removed > 0) {
+    console.error(`opencode-mcp: removed ${removed} duplicate score row(s)`);
+  }
+  try {
+    ensureScoresNaturalUniqueIndex(database);
+  } catch {
+    // Unique index can fail if residual dupes remain; dedupe again and retry once.
+    dedupeScores(database);
+    ensureScoresNaturalUniqueIndex(database);
+  }
+
   const file = legacyScoresFile();
+  const fingerprint = scoresFileFingerprint(file);
+  if (!fingerprint) return;
+
+  const already = database
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get(SCORES_MIGRATED_SETTING) as { value: string } | undefined;
+  if (already?.value === fingerprint) return;
+
   let raw: unknown;
   try {
     raw = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -90,7 +186,16 @@ function migrateScores(database: DatabaseSync): void {
     return; // nothing to migrate
   }
   const records = (raw as { records?: unknown[] })?.records;
-  if (!Array.isArray(records) || records.length === 0) return;
+  if (!Array.isArray(records) || records.length === 0) {
+    database
+      .prepare(
+        `INSERT INTO settings (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run(SCORES_MIGRATED_SETTING, fingerprint);
+    return;
+  }
+
   const ins = database.prepare(
     `INSERT OR IGNORE INTO scores
        (ts, agent, score, sessionID, model, task, feedback, orchester, provider, durationMs)
@@ -115,9 +220,26 @@ function migrateScores(database: DatabaseSync): void {
     );
     inserted += Number(info.changes);
   }
+  database
+    .prepare(
+      `INSERT INTO settings (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    )
+    .run(SCORES_MIGRATED_SETTING, fingerprint);
   if (inserted > 0) {
     console.error(`opencode-mcp: migrated ${inserted} score records from ${file}`);
   }
+}
+
+/** Close the shared DB handle (tests / process shutdown). */
+export function closeDb(): void {
+  if (!db) return;
+  try {
+    db.close();
+  } catch {
+    /* ignore */
+  }
+  db = null;
 }
 
 export function openDb(): DatabaseSync {

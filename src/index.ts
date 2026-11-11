@@ -177,6 +177,19 @@ server.registerTool(
         modelID: args.modelId,
       });
 
+      if (model) {
+        const known = await oc.models(directory);
+        const okModel = known.some(
+          (m: any) => m?.providerID === model.providerID && (m?.id === model.id || m?.modelID === model.id),
+        );
+        if (!okModel) {
+          throw new OpenCodeError(
+            `Unknown model "${model.providerID}/${model.id}". ` +
+              `Use the model tool to list available models for provider "${model.providerID}".`,
+          );
+        }
+      }
+
       const session = await oc.createSession({
         title: args.title,
         agent: orchester,
@@ -247,7 +260,9 @@ server.registerTool(
   "providers",
   {
     title: "List providers",
-    description: "Return supported LLM provider ids for assign_task and models.",
+    description:
+      "Return the curated provider ids supported by this MCP (static subset: " +
+      "openrouter, opencode, opencode-go, openai-compatible).",
     inputSchema: {},
   },
   async () => {
@@ -310,6 +325,24 @@ server.registerTool(
     try {
       mcpLog("score", `session=${args.sessionId} score=${args.score}`);
       const session = await oc.session(args.sessionId);
+      if (!session || !session.id) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(
+                {
+                  result: "fail",
+                  reason: `Unknown sessionId: ${args.sessionId}`,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+          isError: true,
+        };
+      }
       const orchester = (session?.agent ?? "unknown").toString();
       const modelRaw = session?.model
         ? `${session.model.providerID}/${session.model.id}`
@@ -327,7 +360,25 @@ server.registerTool(
       return ok({ result: "success" });
     } catch (err) {
       mcpLog("score", String(err), "error");
-      return ok({ result: "fail" });
+      const reason =
+        err instanceof OpenCodeError
+          ? err.status === 404
+            ? `Unknown sessionId: ${args.sessionId}`
+            : err.detail
+              ? `${err.message}: ${err.detail}`
+              : err.message
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({ result: "fail", reason }, null, 2),
+          },
+        ],
+        isError: true,
+      };
     }
   },
 );

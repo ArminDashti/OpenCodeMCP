@@ -125,7 +125,10 @@ export function stopServeFallback(): boolean {
   } catch {
     return false;
   }
-  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (!Number.isInteger(pid) || pid <= 0) {
+    fs.rmSync(servePidFile(), { force: true });
+    return false;
+  }
   try {
     if (process.platform === "win32") {
       execSync(`taskkill /PID ${pid} /T /F`, { stdio: "pipe" });
@@ -134,7 +137,18 @@ export function stopServeFallback(): boolean {
     }
     fs.rmSync(servePidFile(), { force: true });
     return true;
-  } catch {
+  } catch (err) {
+    // Only treat "already gone" as success. Keep the pid file on EPERM/access errors
+    // so a later stop/retry can still target the process.
+    const message = err instanceof Error ? err.message : String(err);
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    const alreadyGone =
+      code === "ESRCH" ||
+      /no such process|not found|no running instance/i.test(message);
+    if (alreadyGone) {
+      fs.rmSync(servePidFile(), { force: true });
+      return true;
+    }
     return false;
   }
 }
