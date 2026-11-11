@@ -1,0 +1,22 @@
+---
+description: Reach the OpenCode v2 background service from opencodemcp. Use when starting opencode service, the dashboard, OPENCODE_URL, or service.json.
+alwaysApply: false
+---
+
+# OpenCode v2 service discovery
+
+OpenCode 2.2.7 `opencode service start` writes `~/.config/opencode/service.json` with `password` only. `readService()` in `src/bootstrap.ts` returns null unless that file has a numeric `port`, so the MCP never attaches to the background service and falls through to a detached `opencode serve` on port 4096.
+
+**Goal:** Point the dashboard and MCP at the live v2 background service.
+
+**Steps:**
+
+1. Run `opencode service start` (safe to repeat).
+2. Set `OPENCODE_URL` to the URL printed by `opencode service status` (Linux default is `http://127.0.0.1:49374`).
+3. Set `OPENCODE_PASSWORD` from the `password` field in `~/.config/opencode/service.json`. Do not print it.
+4. Probe `GET $OPENCODE_URL/api/info` with basic auth user `opencode` until HTTP 200.
+5. Start the dashboard with `WEBUI_OPEN_BROWSER=0` via `node dist/cli.js webui --port 28479`.
+
+**Gotchas:** Put the CLI on the default PATH. The installer writes `$HOME/.opencode/bin/opencode` and login shells do not load `~/.bashrc`. Install with `curl -fsSL https://opencode.ai/v2/install | bash -s -- --no-modify-path --version 2.2.7`, then `sudo ln -sfn "$HOME/.opencode/bin/opencode" /usr/local/bin/opencode`.
+
+**What didn't work:** Reading `{port, password}` from `service.json` (2.2.7 has no port, so discovery returns null). Using the README default `http://127.0.0.1:4096` does not reach the background service.
