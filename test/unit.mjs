@@ -144,8 +144,10 @@ check("resolveOpencodeGoApiKey: prefers portable then pattern", () => {
   }
   process.env.OPENCODE_GO_TEAM_API_KEY = "pattern-key-value";
   assert.equal(resolveOpencodeGoApiKey(), "pattern-key-value");
+  process.env.OPENCODE_GO_ARMIN_DOPAMINE_GMAIL_API_KEY = "legacy-key";
+  assert.equal(resolveOpencodeGoApiKey(), "legacy-key");
   process.env.OPENCODE_GO_API_KEY = "portable-key";
-  // Legacy list checks OPENCODE_GO_API_KEY after the personal Armin name; portable still wins over pattern-only.
+  // Portable name must win over legacy personal vars when both are set.
   assert.equal(resolveOpencodeGoApiKey(), "portable-key");
   for (const k of Object.keys(process.env)) {
     if (!(k in saved)) delete process.env[k];

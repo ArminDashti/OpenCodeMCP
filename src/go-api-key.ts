@@ -11,10 +11,9 @@ export const OPENCODE_GO_API_KEY_ENV = "OPENCODE_GO_API_KEY";
  */
 export const OPENCODE_GO_ARMIN_ENV = "OPENCODE_GO_ARMIN_DOPAMINE_GMAIL_API_KEY";
 
-/** Well-known names checked first (order preserved for existing installs). */
+/** Legacy personal names kept as fallbacks after the portable env var. */
 const LEGACY_GO_KEY_ENV_NAMES = [
   OPENCODE_GO_ARMIN_ENV,
-  OPENCODE_GO_API_KEY_ENV,
   "OPENCODE_GO_DASHTI75_API_KEY",
 ] as const;
 
@@ -65,17 +64,20 @@ export function loadDotenvFiles(): void {
 
 /**
  * Resolve OpenCode Go API key from env (after optional dotenv hydration).
- * Prefers well-known names (including legacy personal vars), then any
- * `OPENCODE_GO_*_API_KEY` pattern.
+ * Prefers the portable `OPENCODE_GO_API_KEY`, then legacy personal names,
+ * then any other `OPENCODE_GO_*_API_KEY` pattern.
  */
 export function resolveOpencodeGoApiKey(): string | undefined {
   loadDotenvFiles();
+  const portable = process.env[OPENCODE_GO_API_KEY_ENV]?.trim();
+  if (portable) return portable;
   for (const name of LEGACY_GO_KEY_ENV_NAMES) {
     const val = process.env[name]?.trim();
     if (val) return val;
   }
   for (const [name, raw] of Object.entries(process.env)) {
     if (!/^OPENCODE_GO_.+_API_KEY$/i.test(name)) continue;
+    if (name === OPENCODE_GO_API_KEY_ENV) continue;
     if ((LEGACY_GO_KEY_ENV_NAMES as readonly string[]).includes(name)) continue;
     const val = raw?.trim();
     if (val) return val;
