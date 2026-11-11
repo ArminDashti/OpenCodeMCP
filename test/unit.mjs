@@ -6,16 +6,18 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(here, "..", "dist");
+/** Absolute filesystem paths are not valid ESM import specifiers on Windows (c:). */
+const distImport = (name) => pathToFileURL(path.join(dist, name)).href;
 
 const { costIsFree, modelRowIsFree, filterSessionIds, parseCompactTimestamp } = await import(
-  path.join(dist, "mcp-api.js")
+  distImport("mcp-api.js"),
 );
-const { closeDb, openDb, allScores, insertScore, dedupeScores } = await import(path.join(dist, "db.js"));
-const { resolveOpencodeGoApiKey } = await import(path.join(dist, "go-api-key.js"));
+const { closeDb, openDb, allScores, insertScore, dedupeScores } = await import(distImport("db.js"));
+const { loadDotenvFiles, resolveOpencodeGoApiKey } = await import(distImport("go-api-key.js"));
 
 const results = [];
 function check(name, fn) {
@@ -138,21 +140,46 @@ check("score migration is idempotent + dedupes", () => {
 });
 
 check("resolveOpencodeGoApiKey: prefers portable then pattern", () => {
-  const saved = { ...process.env };
+  // Hydrate dotenv once first — otherwise clearing env and then calling
+  // resolveOpencodeGoApiKey() would reload real keys from ~/.opencode-mcp/.env etc.
+  loadDotenvFiles();
+
+  const goKeyRe = /^OPENCODE_GO/i;
+  const saved = {};
   for (const k of Object.keys(process.env)) {
-    if (/^OPENCODE_GO_/i.test(k)) delete process.env[k];
+    if (goKeyRe.test(k)) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
   }
-  process.env.OPENCODE_GO_TEAM_API_KEY = "pattern-key-value";
-  assert.equal(resolveOpencodeGoApiKey(), "pattern-key-value");
-  process.env.OPENCODE_GO_ARMIN_DOPAMINE_GMAIL_API_KEY = "legacy-key";
-  assert.equal(resolveOpencodeGoApiKey(), "legacy-key");
-  process.env.OPENCODE_GO_API_KEY = "portable-key";
-  // Portable name must win over legacy personal vars when both are set.
-  assert.equal(resolveOpencodeGoApiKey(), "portable-key");
-  for (const k of Object.keys(process.env)) {
-    if (!(k in saved)) delete process.env[k];
+
+  /** Compare without assert.equal so failure messages never echo secret values. */
+  const expectResolved = (label, expected) => {
+    const actual = resolveOpencodeGoApiKey();
+    if (actual !== expected) {
+      throw new Error(
+        `${label}: resolved unexpected key ` +
+          `(got len=${actual == null ? "null" : actual.length}, expected len=${expected.length}; values redacted)`,
+      );
+    }
+  };
+
+  try {
+    process.env.OPENCODE_GO_TEAM_API_KEY = "pattern-key-value";
+    expectResolved("pattern-only", "pattern-key-value");
+
+    process.env.OPENCODE_GO_ARMIN_DOPAMINE_GMAIL_API_KEY = "legacy-key";
+    expectResolved("legacy-over-pattern", "legacy-key");
+
+    process.env.OPENCODE_GO_API_KEY = "portable-key";
+    // Portable name must win over legacy personal vars when both are set.
+    expectResolved("portable-over-legacy", "portable-key");
+  } finally {
+    for (const k of Object.keys(process.env)) {
+      if (goKeyRe.test(k)) delete process.env[k];
+    }
+    Object.assign(process.env, saved);
   }
-  Object.assign(process.env, saved);
 });
 
 const failed = results.filter((r) => !r.ok);
