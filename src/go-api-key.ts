@@ -2,12 +2,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-/** Preferred env var for Armin's OpenCode Go (Gmail) API key. */
+/** Portable env var for the OpenCode Go API key. */
+export const OPENCODE_GO_API_KEY_ENV = "OPENCODE_GO_API_KEY";
+
+/**
+ * @deprecated Personal machine-specific name kept as a fallback for existing setups.
+ * Prefer {@link OPENCODE_GO_API_KEY_ENV}.
+ */
 export const OPENCODE_GO_ARMIN_ENV = "OPENCODE_GO_ARMIN_DOPAMINE_GMAIL_API_KEY";
 
-const GO_KEY_ENV_NAMES = [
+/** Well-known names checked first (order preserved for existing installs). */
+const LEGACY_GO_KEY_ENV_NAMES = [
   OPENCODE_GO_ARMIN_ENV,
-  "OPENCODE_GO_API_KEY",
+  OPENCODE_GO_API_KEY_ENV,
   "OPENCODE_GO_DASHTI75_API_KEY",
 ] as const;
 
@@ -56,11 +63,21 @@ export function loadDotenvFiles(): void {
   }
 }
 
-/** Resolve OpenCode Go API key from env (after optional dotenv hydration). */
+/**
+ * Resolve OpenCode Go API key from env (after optional dotenv hydration).
+ * Prefers well-known names (including legacy personal vars), then any
+ * `OPENCODE_GO_*_API_KEY` pattern.
+ */
 export function resolveOpencodeGoApiKey(): string | undefined {
   loadDotenvFiles();
-  for (const name of GO_KEY_ENV_NAMES) {
+  for (const name of LEGACY_GO_KEY_ENV_NAMES) {
     const val = process.env[name]?.trim();
+    if (val) return val;
+  }
+  for (const [name, raw] of Object.entries(process.env)) {
+    if (!/^OPENCODE_GO_.+_API_KEY$/i.test(name)) continue;
+    if ((LEGACY_GO_KEY_ENV_NAMES as readonly string[]).includes(name)) continue;
+    const val = raw?.trim();
     if (val) return val;
   }
   return undefined;

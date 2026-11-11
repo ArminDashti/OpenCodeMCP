@@ -21,49 +21,38 @@ orchestrator (Cursor / Claude Code / …)
 | Tool | Purpose |
 | --- | --- |
 | `assign_task` | Run a prompt; returns `sessionId`, `response`, `duration`, `startedAt`, `finishedAt`. |
-| `providers` | Supported provider ids (`provider[]`). |
+| `providers` | Curated provider ids (`provider[]`) — static subset, not a live OpenCode dump. |
 | `model` | Search/list models; returns `{ modelId, free }[]`. |
-| `score` | Score a session 0–10; returns `result`: `success` or `fail`. |
+| `score` | Score a session 0–10; returns `{ result: "success" \| "fail" }` (fail sets `isError` + `reason`). |
 | `sessions` | Filter sessions; returns `sessionId[]` (default limit 16). |
 
 ### Orchestration loop
 
 ```
-models_list   →  pick "provider/model" for the task
-assign_task   →  task + model (+ agent/directory), get sessionID + reply
-fetch_session →  inspect transcript / poll a background dispatch
-score_to_agent(agent, score, sessionID)  →  ranking → next assignment
+model         →  pick provider + modelId (optionally onlyFreeModels)
+assign_task   →  prompt + model (+ harness/directories/filePaths), get sessionId + response
+sessions      →  filter recent session ids (optional date / provider / model / harness)
+score         →  score sessionId 0–10 → { result: "success" }
 ```
 
 ## Providers
 
-Supported provider ids (use as `provider` in `assign_task` / `models_list`, or
-via the `providers_list` MCP tool and the dashboard's Providers page):
+The `providers` tool and dashboard catalog are a **static curated subset** of four
+provider ids (see `src/providers.ts`). OpenCode itself may expose many more; use the
+`model` tool against a live server to discover what that instance actually has.
 
 | Provider id | Label | Base URL | API key env | Logo |
 | --- | --- | --- | --- | --- |
-| `openai` | OpenAI | `https://api.openai.com/v1` | `OPENAI_API_KEY` | `assets/providers/openai.svg` |
-| `anthropic` | Claude (Anthropic) | `https://api.anthropic.com` | `ANTHROPIC_API_KEY` | `assets/providers/claude.svg` |
-| `google` | Google (Gemini) | `https://generativelanguage.googleapis.com` | `GEMINI_API_KEY` (`GOOGLE_API_KEY`) | `assets/providers/google.svg` |
-| `mistral` | Mistral AI | `https://api.mistral.ai/v1` | `MISTRAL_API_KEY` | `assets/providers/mistral.svg` |
 | `openrouter` | OpenRouter | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `assets/providers/openrouter.svg` |
 | `opencode` | OpenCode Zen | `https://opencode.ai/zen/v1` | `OPENCODE_API_KEY` | `assets/providers/opencode.svg` |
-| `opencode-go` | OpenCode Go | `https://opencode.ai/zen/go/v1` | `OPENCODE_GO_API_KEY` (`OPENCODE_API_KEY`) | `assets/providers/opencode-go.svg` |
-| `ollama` | Ollama (local) | `http://localhost:11434` | none (optional `OLLAMA_API_KEY`) | `assets/providers/ollama.svg` |
+| `opencode-go` | OpenCode Go | `https://opencode.ai/zen/go/v1` | `OPENCODE_GO_API_KEY` | `assets/providers/opencode-go.svg` |
 | `openai-compatible` | OpenAI-Compatible (custom) | `{baseURL}` (e.g. `http://127.0.0.1:1234/v1`) | custom | `assets/providers/openai-compatible.svg` |
-| `xai` | xAI (Grok) | `https://api.x.ai/v1` | `XAI_API_KEY` | `assets/providers/xai.svg` |
-| `deepseek` | DeepSeek | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` | `assets/providers/deepseek.svg` |
-| `groq` | Groq | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` | `assets/providers/groq.svg` |
-| `perplexity` | Perplexity | `https://api.perplexity.ai` | `PERPLEXITY_API_KEY` | `assets/providers/perplexity.svg` |
-| `cohere` | Cohere | `https://api.cohere.com/v2` | `COHERE_API_KEY` | `assets/providers/cohere.svg` |
 
 Key per-provider endpoints (chat / models / catalog) live in `src/providers.ts`
 and are served at runtime via `GET /api/providers` (dashboard Providers page)
-and the `providers_list` MCP tool. OpenCode Go endpoints and setup were verified
+and the `providers` MCP tool. OpenCode Go endpoints and setup were verified
 2026-10-04 against [OpenCode Go docs](https://opencode.ai/v2/docs/console/go)
-and `GET https://opencode.ai/zen/go/v1/models`. Other providers were verified
-2026-09-30 (docs URLs in the same file).
-All logos except `opencode-official-favicon.svg` are transparent-background SVGs.
+and `GET https://opencode.ai/zen/go/v1/models`.
 
 ### OpenCode Go plan
 
@@ -75,12 +64,15 @@ coding models. Setup:
 3. From MCP, use `provider` `opencode-go` and a model slug (or `opencode-go/<slug>`),
    e.g. `opencode-go/gpt-6-luna`, `opencode-go/space-bunny-free`.
 
+Set `OPENCODE_GO_API_KEY` (preferred). Legacy `OPENCODE_GO_*_API_KEY` names still work
+as fallbacks; never commit real keys.
+
 Direct HTTP (OpenAI-compatible): `https://opencode.ai/zen/go/v1` (`/chat/completions`,
 `/models`). Coding agents should send `x-opencode-session` per conversation and a
 client-specific `User-Agent` (see [Go docs](https://opencode.ai/v2/docs/console/go)).
 
 Optional bundled console catalog: place `src/data/enterprise-providers.json` and run
-`node scripts/generate-enterprise-providers.mjs` to refresh `models_list` metadata.
+`node scripts/generate-enterprise-providers.mjs` to refresh `model` metadata.
 
 ## Requirements
 
@@ -94,7 +86,7 @@ Optional bundled console catalog: place `src/data/enterprise-providers.json` and
 git clone <this repo> opencode-mcp && cd opencode-mcp
 npm install
 npm run build          # emits dist/
-npm test               # integration harness against your running OpenCode
+npm test               # unit checks + integration harness against your running OpenCode
 ```
 
 ## CLI (`opencodemcp`)
@@ -123,13 +115,18 @@ the background service from `service.json`, then the stored api port.
 Running `opencodemcp webui` automatically opens your default browser at the
 dashboard URL.
 
+`service start` reports success only after a readiness probe succeeds.
+`service stop` treats “already down” (no pid file, not reachable) as success.
+`opencodemcp doctor` does not treat a stale `serve.pid` alone as proof that
+`service.json` / the server is healthy.
+
 ## Data storage
 
 All persistent data lives in a single SQLite database at
 `~/.opencode-mcp/opencode-mcp.db` (override with `OPENCODE_MCP_DB`):
 
-- **scores** — `score_to_agent` records (auto-migrated from the legacy
-  `scores.json` on first run)
+- **scores** — score records (auto-migrated once from legacy `scores.json`;
+  migration is idempotent and duplicates are deduped)
 - **api_keys** — per-provider API keys imported through the WebUI
 - **logs** — persisted log ring for the Logs page
 - **settings** — WebUI preferences (theme, density, refresh, …)
@@ -193,11 +190,12 @@ from the background service's.
 | `OPENCODE_PASSWORD` | from `service.json` | HTTP basic-auth password. |
 | `OPENCODE_SERVER_PASSWORD` | — | Alias for `OPENCODE_PASSWORD`. |
 | `OPENCODE_USERNAME` | `opencode` | Basic-auth user. |
-  | `OPENCODE_DIRECTORY` | `process.cwd()` | Project directory tasks run in. |
-  | `WEBUI_USERNAME` / `WEBUI_PASSWORD` / `WEBUI_EMAIL` | `admin` / `admin` / `admin@local` | Dashboard login (seeded on first run). Override before exposing the dashboard beyond loopback. |
+| `OPENCODE_DIRECTORY` | `process.cwd()` | Project directory tasks run in. |
+| `WEBUI_USERNAME` / `WEBUI_PASSWORD` / `WEBUI_EMAIL` | `admin` / `admin` / `admin@local` | Dashboard login (seeded on first run). Override before exposing the dashboard beyond loopback. |
 | `OPENCODE_AUTOSTART` | `1` | Allow starting/recovering the background service. Set `0` to disable. |
 | `OPENCODE_SERVICE_FILE` | `~/.config/opencode/service.json` | Alternate service credential file. |
-| `OPENCODE_SCORES_FILE` | `~/.opencode-mcp/scores.json` | Score store for `score_to_agent`. |
+| `OPENCODE_SCORES_FILE` | `~/.opencode-mcp/scores.json` | Legacy JSON score store (migrated into SQLite). |
+| `OPENCODE_GO_API_KEY` | — | Preferred OpenCode Go API key env var. |
 | `OPENCODE_TIMEOUT_MS` | `30000` | Per-request HTTP timeout. |
 
 ## Tool reference
@@ -206,76 +204,71 @@ from the background service's.
 
 ```jsonc
 {
-  "task": "Add pagination to src/api/users.ts and run the tests",
-  "sessionID": "ses_…",              // optional: continue an existing session
+  "prompt": "Add pagination to src/api/users.ts and run the tests",
   "title": "pagination",             // optional: title for a new session
-  "orchester": "build",              // optional: build | plan | explore | … (agent is a deprecated alias)
-  "provider": "opencode-go",         // optional: pairs with model
-  "model": "gpt-6-luna",             // optional: bare id with provider, or "provider/model" for compatibility
-  "variant": "high",                 // optional: effort tier of that model
-  "directory": "C:/work/app",        // optional: project directory
-  "files": ["C:/work/app/spec.md"],  // optional: prompt attachments
-  "delivery": "steer",               // optional: "steer" (default) | "queue" when busy
-  "autoApprove": false,              // optional: answer permission requests with "once"
-  "wait": true,                      // optional: default true; false = fire and forget
-  "timeoutMs": 180000                // optional: wait budget
+  "provider": "opencode-go",         // optional: pairs with modelId
+  "modelId": "gpt-6-luna",           // optional: bare id with provider
+  "harness": "build",                // optional: orchester agent id (build | plan | explore | …)
+  "directories": "C:/work/app",      // optional: string or string[] (first is used)
+  "filePaths": ["C:/work/app/spec.md"] // optional: prompt attachments
 }
 ```
 
-Result highlights: `status` (`completed` | `blocked` | `timeout` | `failed` | `dispatched`),
-`reply`, `toolCalls`, `cost`, `tokens`, `outcome`, `elapsedMs`, `transcript`.
+Unknown `provider`/`modelId` combinations fail fast (validated against `/api/model`)
+instead of waiting out the idle timeout.
 
-`status: "blocked"` means the run hit a permission the server would ask a human about; the
-response carries `pendingPermission` (`action`, `resources`), and the orchestrator either
-replies with `once`/`always`/`reject` through OpenCode's permission API or re-assigns with
-`autoApprove: true`.
+Result: `sessionId`, `response`, `duration` (ms), `startedAt`, `finishedAt`
+(`YYYY-MM-DDTHH-MM-SS`).
 
-### `models_list`
+### `model`
 
 ```jsonc
-{ "provider": "opencode-go", "search": "luna", "enabledOnly": true,
-  "detail": "full", "limit": 50 }
+{ "provider": "opencode-go", "model": "luna", "onlyFreeModels": true }
 ```
 
-Returns `default`, `totalMatched`, `returned` and `models[]` with
-`id` (`provider/modelID`), `provider`/`providerID`, `model`/`modelID`, `context`, `maxOutput`, `tools`,
-`variants`, `status`, `enabled`, `isDefault`, plus evidence from past runs:
-`scoreCount`, `averageScore`, `lastScore`, `avgTaskMs`/`avgTaskTime` (average time of doing a task).
-Large result sets are trimmed to fit the MCP response budget and flagged
-`truncated`.
+Returns `{ model: [{ modelId, free }, ...] }`. A model is `free` only when cost fields
+are explicitly all zero, or the model id ends with `-free` / `_free`. Empty `cost: {}`
+from OpenCode is treated as **unknown**, not free — so `onlyFreeModels` can filter.
 
-### `score_to_agent`
+### `providers`
 
 ```jsonc
-{ "orchester": "build", "score": 92, "sessionID": "ses_…",
-  "provider": "opencode-go", "model": "gpt-6-luna", "durationMs": 45000,
-  "feedback": "clean diff, tests added",
-  "task": "pagination", "includeRanking": true }
+{}
 ```
 
-Returns the stored record, this agent's `agentStats` (`count`, `average`, `last`, `min`,
-`max`) and the full `ranking` (best first) plus `bestAgent`. Scores live in
-`OPENCODE_SCORES_FILE` (default `~/.opencode-mcp/scores.json`, capped at 5000 records).
+Returns `{ provider: ["openrouter", "opencode", "opencode-go", "openai-compatible"] }`.
 
-### `fetch_session`
+### `score`
 
 ```jsonc
-{ "sessionID": "ses_…",   // omit to list sessions
-  "limit": 200, "order": "asc",
-  "includeMessages": true, "includePermissions": true, "runningOnly": false }
+{ "sessionId": "ses_…", "score": 9 }
 ```
 
-List mode returns `count`, `running`, `sessions[]` (id, title, agent, model, outcome, cost,
-tokens, timestamps). Read mode returns `session`, `running`, `messages[]` (user text,
-assistant text, reasoning summary, tool calls with status, idle markers) and
-`pendingPermissions` when a run is waiting on a decision.
+Records quality on a **0–10** scale. Success → `{ "result": "success" }`.
+Unknown `sessionId` → `{ "result": "fail", "reason": "…" }` with `isError: true`.
+
+### `sessions`
+
+```jsonc
+{
+  "fromDate": "2026-11-11T00-00-00",  // optional YYYY-MM-DDTHH-MM-SS
+  "toDate": null,
+  "provider": "opencode-go",
+  "modelId": "gpt-6-luna",
+  "harness": "build",
+  "limit": 16
+}
+```
+
+Returns `{ sessionId: ["ses_…", ...] }`. Unparseable `fromDate` / `toDate` values
+are rejected with a validation error (they are not silently ignored).
 
 ## Driving OpenCode ACP-style
 
 Orchestrators that speak ACP can launch `opencode acp` directly. This MCP is for
 orchestrators that speak MCP instead: sessions stay server-side, so several tasks run in
 parallel and survive the orchestrator's context window, and it adds what an ACP client does
-not provide — model catalogues, score-based agent ranking, and polling of detached runs.
+not provide — model catalogues, score-based ranking, and polling of detached runs.
 
 ## Notes on the OpenCode v2 API (things this server works around)
 
@@ -296,8 +289,8 @@ not provide — model catalogues, score-based agent ranking, and polling of deta
 
 ## Tests
 
-`npm test` drives the built server over MCP stdio and exercises all five tools against a
-running OpenCode: session creation, blocking and detached runs, transcript polling, scoring,
-error surfacing and output-budget trimming. It needs model access; set
+`npm test` runs offline unit checks (`test/unit.mjs`) then the integration harness
+(`test/harness.mjs`) against a running OpenCode. The harness records timeouts as named
+`FAIL` rows instead of crashing. It needs model access for the live path; set
 `OPENCODE_URL` / `OPENCODE_PASSWORD` to test against a specific `serve` instance, otherwise
 it uses the discovered background service.

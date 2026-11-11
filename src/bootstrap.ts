@@ -125,7 +125,10 @@ export function stopServeFallback(): boolean {
   } catch {
     return false;
   }
-  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (!Number.isInteger(pid) || pid <= 0) {
+    fs.rmSync(servePidFile(), { force: true });
+    return false;
+  }
   try {
     if (process.platform === "win32") {
       execSync(`taskkill /PID ${pid} /T /F`, { stdio: "pipe" });
@@ -135,7 +138,9 @@ export function stopServeFallback(): boolean {
     fs.rmSync(servePidFile(), { force: true });
     return true;
   } catch {
-    return false;
+    // Process already gone (ESRCH) — clear the stale pid file and treat as stopped.
+    fs.rmSync(servePidFile(), { force: true });
+    return true;
   }
 }
 

@@ -67,7 +67,7 @@ No parameters. Returns \`provider\`: string array of ids.
 { "sessionId": "ses_…", "score": 9 }
 \`\`\`
 
-Returns \`result\`: \`success\` or \`fail\`.
+Returns \`{ result: "success" }\` or \`{ result: "fail", reason }\` with \`isError\` on failure.
 
 ## sessions
 
@@ -82,14 +82,12 @@ Returns \`result\`: \`success\` or \`fail\`.
 }
 \`\`\`
 
-Date filters use \`YYYY-MM-DDTHH-MM-SS\`. Returns \`sessionId\` array.
+Date filters use \`YYYY-MM-DDTHH-MM-SS\` (invalid values are rejected). Returns \`sessionId\` array.
 
 ## Providers
 
-Supported provider ids (use as \`provider\` in \`assign_task\` / \`model\`):
-\`openai\`, \`anthropic\`, \`google\`, \`mistral\`, \`openrouter\`, \`opencode\`,
-\`opencode-go\`, \`ollama\`, \`openai-compatible\`, \`xai\`, \`deepseek\`, \`groq\`,
-\`perplexity\`, \`cohere\`.
+Curated static subset (use as \`provider\` in \`assign_task\` / \`model\`):
+\`openrouter\`, \`opencode\`, \`opencode-go\`, \`openai-compatible\`.
 
 ${GO_SETUP_MARKDOWN}
 

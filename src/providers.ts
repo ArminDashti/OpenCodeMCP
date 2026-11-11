@@ -5,13 +5,13 @@
  * (see `docs` + `sources`). Logos are transparent-background SVGs stored in
  * `assets/providers/` so the WebUI works offline.
  *
- * The catalog is intentionally limited to: OpenCode Go, OpenCode Zen,
- * OpenRouter and OpenAI-Compatible (custom).
+ * The catalog is a **static curated subset** (not a live OpenCode provider dump):
+ * OpenCode Go, OpenCode Zen, OpenRouter, and OpenAI-Compatible (custom).
  *   - opencode-official-favicon.svg is the only non-transparent file (official
  *     favicon with dark background, kept for reference).
  *
  * OpenCode provider IDs (`id`) match the `provider/model` prefix used by
- * `assign_task` / `models_list` (e.g. `opencode-go/kimi-k3`).
+ * `assign_task` / `model` (e.g. `opencode-go/kimi-k3`).
  */
 
 export interface ProviderInfo {

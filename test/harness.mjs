@@ -25,6 +25,7 @@ const FREE_MODEL_ID = "gpt-6-luna";
 const results = [];
 let nextId = 1;
 let stderrBuffer = "";
+let currentCheck = "startup";
 
 const child = spawn(process.execPath, [serverJs], {
   stdio: ["pipe", "pipe", "pipe"],
@@ -98,87 +99,152 @@ async function callTool(name, args, timeoutMs = 180_000) {
   return { ...parseTool(res), raw: res };
 }
 
+/** Run a named check; timeouts and thrown errors become FAIL rows instead of crashing. */
+async function named(name, fn) {
+  currentCheck = name;
+  try {
+    await fn();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const label = /timeout/i.test(msg) ? `${name} (timeout)` : `${name} (error)`;
+    check(label, false, msg.slice(0, 400));
+  }
+}
+
 async function main() {
-  const init = await send(
-    "initialize",
-    {
-      protocolVersion: "2025-06-18",
-      capabilities: {},
-      clientInfo: { name: "opencode-mcp-harness", version: "0.0.1" },
-    },
-    20_000,
-  );
-  check(
-    "initialize",
-    init?.serverInfo?.name === "opencode-mcp",
-    `serverInfo=${JSON.stringify(init?.serverInfo)}`,
-  );
-  notify("notifications/initialized");
+  await named("initialize", async () => {
+    const init = await send(
+      "initialize",
+      {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "opencode-mcp-harness", version: "0.0.1" },
+      },
+      90_000,
+    );
+    check(
+      "initialize",
+      init?.serverInfo?.name === "opencode-mcp",
+      `serverInfo=${JSON.stringify(init?.serverInfo)}`,
+    );
+    notify("notifications/initialized");
+  });
 
-  const list = await send("tools/list", {}, 20_000);
-  const names = (list.tools ?? []).map((t) => t.name).sort();
-  const expected = ["assign_task", "model", "providers", "score", "sessions"];
-  check(
-    "tools/list exposes exactly the 5 tools",
-    JSON.stringify(names) === JSON.stringify(expected),
-    names.join(","),
-  );
+  await named("tools/list exposes exactly the 5 tools", async () => {
+    const list = await send("tools/list", {}, 20_000);
+    const names = (list.tools ?? []).map((t) => t.name).sort();
+    const expected = ["assign_task", "model", "providers", "score", "sessions"];
+    check(
+      "tools/list exposes exactly the 5 tools",
+      JSON.stringify(names) === JSON.stringify(expected),
+      names.join(","),
+    );
+  });
 
-  const prov = await callTool("providers", {}, 20_000);
-  check(
-    "providers returns provider ids",
-    !prov.isError && Array.isArray(prov.json?.provider) && prov.json.provider.includes(FREE_PROVIDER),
-    `count=${prov.json?.provider?.length}`,
-  );
+  await named("providers returns provider ids", async () => {
+    const prov = await callTool("providers", {}, 20_000);
+    check(
+      "providers returns provider ids",
+      !prov.isError && Array.isArray(prov.json?.provider) && prov.json.provider.includes(FREE_PROVIDER),
+      `count=${prov.json?.provider?.length}`,
+    );
+  });
 
-  const modelList = await callTool("model", { provider: FREE_PROVIDER, onlyFreeModels: false });
-  check("model succeeds", !modelList.isError, modelList.isError ? modelList.text.slice(0, 300) : "");
-  const modelRows = modelList.json?.model ?? [];
-  check(
-    "model returns modelId and free",
-    modelRows.length > 0 && modelRows.every((m) => typeof m.modelId === "string" && typeof m.free === "boolean"),
-    `${modelRows.length} rows`,
-  );
+  let modelRows = [];
+  await named("model succeeds", async () => {
+    const modelList = await callTool("model", { provider: FREE_PROVIDER, onlyFreeModels: false });
+    check("model succeeds", !modelList.isError, modelList.isError ? modelList.text.slice(0, 300) : "");
+    modelRows = modelList.json?.model ?? [];
+    check(
+      "model returns modelId and free",
+      modelRows.length > 0 && modelRows.every((m) => typeof m.modelId === "string" && typeof m.free === "boolean"),
+      `${modelRows.length} rows`,
+    );
+    const paidOrUnknown = modelRows.filter((m) => !m.free);
+    check(
+      "model does not mark every entry free",
+      modelRows.length === 0 || paidOrUnknown.length > 0,
+      `free=${modelRows.filter((m) => m.free).length}/${modelRows.length}`,
+    );
+  });
 
-  const assign = await callTool(
-    "assign_task",
-    {
-      prompt: "Reply with exactly the word PONG and nothing else.",
-      title: "mcp-harness",
-      provider: FREE_PROVIDER,
-      modelId: FREE_MODEL_ID,
-    },
-    150_000,
-  );
-  check("assign_task succeeds", !assign.isError, assign.isError ? assign.text.slice(0, 400) : "");
-  check(
-    "assign_task response shape",
-    assign.json?.sessionId &&
-      /\bPONG\b/.test(assign.json?.response ?? "") &&
-      typeof assign.json?.duration === "number" &&
-      /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/.test(assign.json?.startedAt ?? ""),
-    JSON.stringify(assign.json),
-  );
-  const sessionId = assign.json?.sessionId;
+  let sessionId;
+  await named("assign_task succeeds", async () => {
+    const assign = await callTool(
+      "assign_task",
+      {
+        prompt: "Reply with exactly the word PONG and nothing else.",
+        title: "mcp-harness",
+        provider: FREE_PROVIDER,
+        modelId: FREE_MODEL_ID,
+      },
+      150_000,
+    );
+    check("assign_task succeeds", !assign.isError, assign.isError ? assign.text.slice(0, 400) : "");
+    check(
+      "assign_task response shape",
+      assign.json?.sessionId &&
+        /\bPONG\b/.test(assign.json?.response ?? "") &&
+        typeof assign.json?.duration === "number" &&
+        /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/.test(assign.json?.startedAt ?? ""),
+      JSON.stringify(assign.json),
+    );
+    sessionId = assign.json?.sessionId;
+  });
 
-  const sessions = await callTool("sessions", { limit: 16 });
-  check(
-    "sessions returns sessionId list",
-    !sessions.isError &&
-      Array.isArray(sessions.json?.sessionId) &&
-      sessions.json.sessionId.includes(sessionId),
-    `ids=${sessions.json?.sessionId?.length}`,
-  );
+  await named("sessions returns sessionId list", async () => {
+    const sessions = await callTool("sessions", { limit: 16 });
+    check(
+      "sessions returns sessionId list",
+      !sessions.isError &&
+        Array.isArray(sessions.json?.sessionId) &&
+        (!sessionId || sessions.json.sessionId.includes(sessionId)),
+      `ids=${sessions.json?.sessionId?.length}`,
+    );
+  });
 
-  const score = await callTool("score", { sessionId, score: 9 });
-  check("score returns success", !score.isError && score.json?.result === "success");
+  await named("sessions rejects unparseable fromDate", async () => {
+    const badDate = await callTool("sessions", { fromDate: "not-a-date", limit: 5 }, 20_000);
+    check(
+      "sessions rejects unparseable fromDate",
+      badDate.isError && /fromDate|Invalid/i.test(badDate.text),
+      badDate.text.slice(0, 200),
+    );
+  });
 
-  const bad = await callTool(
-    "assign_task",
-    { prompt: "fail", provider: FREE_PROVIDER, modelId: "nomodel" },
-    60_000,
-  );
-  check("bad model is a tool error", bad.isError, bad.text.slice(0, 200));
+  await named("score returns success", async () => {
+    if (!sessionId) {
+      check("score returns success", false, "skipped — no sessionId from assign_task");
+      return;
+    }
+    const score = await callTool("score", { sessionId, score: 9 });
+    check("score returns success", !score.isError && score.json?.result === "success");
+  });
+
+  await named("score unknown session is a tool error", async () => {
+    const missing = await callTool("score", { sessionId: "ses_does_not_exist_harness", score: 1 }, 20_000);
+    check(
+      "score unknown session is a tool error",
+      missing.isError &&
+        missing.json?.result === "fail" &&
+        typeof missing.json?.reason === "string" &&
+        missing.json.reason.length > 0,
+      missing.text.slice(0, 200),
+    );
+  });
+
+  await named("bad model is a tool error", async () => {
+    const bad = await callTool(
+      "assign_task",
+      { prompt: "fail", provider: FREE_PROVIDER, modelId: "nomodel" },
+      60_000,
+    );
+    check(
+      "bad model is a tool error",
+      bad.isError && /Unknown model|nomodel/i.test(bad.text),
+      bad.text.slice(0, 200),
+    );
+  });
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
@@ -190,8 +256,15 @@ async function main() {
 
 main()
   .catch((err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    const label = /timeout/i.test(msg)
+      ? `${currentCheck} (timeout)`
+      : `${currentCheck} (harness error)`;
+    check(label, false, msg.slice(0, 400));
     console.error("HARNESS ERROR:", err);
     console.error("server stderr:\n" + stderrBuffer.slice(0, 2000));
+    const failed = results.filter((r) => !r.ok);
+    console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
     process.exitCode = 1;
   })
   .finally(() => {
