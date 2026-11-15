@@ -70,3 +70,11 @@ unverified) or skip it. This keeps confident guesses out.
 <!-- When no richer mechanism is available, append dated golden-path entries here.
      Format: ### YYYY-MM-DD — <title>  /  **Goal**, **Steps**, **Gotchas**,
      **What didn't work**. Keep secrets out — point to where they live. -->
+
+## Git workflow (required)
+
+After any change, always:
+1. Commit the change on a new branch and push it to GitHub (`origin`).
+2. Create a pull request for it.
+3. Merge the pull request into the `main` branch.
+4. Make sure everything is committed and pushed to GitHub, and that local `main` is pulled and in sync with `origin/main`.
